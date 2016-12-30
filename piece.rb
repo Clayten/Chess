@@ -72,7 +72,7 @@ module Chess
     end
 
     def can_move_to x, y
-      moves.any? {|x2, y2| x == x2 && y == y2 }
+      moves.any? {|mv| mv.dest == [x, y] }
     end
 
     def location
@@ -85,11 +85,19 @@ module Chess
 
     def moved? ; !!last_move end
 
-    def moved ; @number_of_moves += 1 ; @last_move = board.move_number end
+    def moved ; @number_of_moves += 1 ; @last_move = board.halfmove_number end
 
     def moves ; self.class.moves board, self end
 
-    def move x2, y2 ; board.move *location, x2, y2 end
+    # Creates the object, doesn't apply it
+    def move dest: , src2: nil, dest2: nil, capture_loc: nil
+      final    = :white == color ? board.ysize :  1 # where do we get promoted?
+      new_type = :queen if dest.last == final
+      capture_type = board.pieces[dest] || board.pieces[capture_loc]
+      check = checkmate = false # TODO fix this...
+      Move.new color, type, src: location, dest: dest, new_type: new_type, src2: src2, dest2: dest2,
+        capture_type: capture_type, capture_loc: capture_loc, check: check, checkmate: checkmake
+    end
 
     def to_s ; @symbol ||= true ? self.class.unicode[color][type] : self.class.ascii[color][type] end
 
@@ -116,40 +124,38 @@ module Chess
       def check? ; self.class.check? board, self end
 
       def self.moves board, piece
-        board.adjacent_squares(*piece.location, piece.color) +
-        board.castling(*piece.location, piece.color)
+        board.adjacent_squares(piece) + board.castling(piece)
       end
     end
 
     class Queen < Piece
       def self.moves board, piece
-        board.diagonal_lines(*piece.location, piece.color) +
-        board.cardinal_lines(*piece.location, piece.color)
+        board.diagonal_lines(piece) + board.cardinal_lines(piece)
       end
     end
 
     class Rook < Piece
       def self.moves board, piece
-        board.cardinal_lines(*piece.location, piece.color)
+        board.cardinal_lines(piece)
       end
     end
 
     class Bishop < Piece
       def self.moves board, piece
-        board.diagonal_lines(*piece.location, piece.color)
+        board.diagonal_lines(piece)
       end
     end
 
     class Knight < Piece
       def self.moves board, piece
-        board.knight_moves(*piece.location, piece.color)
+        board.knight_moves(piece)
       end
     end
 
     # TODO replace with methods on board. Partly so method names are 'pawn_moves', etc.
     class Pawn < Piece
       def self.moves board, piece
-        board.pawn_moves(*piece.location, piece.color)
+        board.pawn_moves(piece)
       end
     end
   end
