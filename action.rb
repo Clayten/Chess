@@ -26,13 +26,23 @@ module Chess
 
     def to_s
       types = {king: 'K', queen: 'Q', rook: 'R', knight: 'N', bishop: 'B', pawn: ''}
-      "#{types[type]}#{'x' if captured_type}#{locstr dest}#{"=#{types[new_type]}" if new_type}"
+      base = if src2
+        if 1 == src2.first # queenside
+          'O-O-O'
+        else
+          'O-O'
+        end
+      else
+        "#{types[type]}#{'x' if captured_type}#{locstr dest}#{"=#{types[new_type]}" if new_type}"
+      end
+      state = "#{'+' if check}#{'#' if checkmate}"
+      base + state 
     end
 
     def description
       "#{color} #{type} " +
       "#{src2 ? 'castles' : 'moves'} from #{locstr src} to #{locstr dest}" +
-      "#{" capturing#{' en-passant' if capture_location} a #{captured_type}#{" at #{loc_str capture_location}" if capture_location}" if captured_type}" +
+      "#{" capturing#{' en-passant' if capture_location} a #{captured_type}#{" at #{locstr capture_location}" if capture_location}" if captured_type}" +
       "#{" and is promoted to #{new_type}" if new_type}"
     end
 
@@ -40,7 +50,8 @@ module Chess
       "<#{self.class.name}:#{'0x%014x' % (object_id << 1)} - #{description}>"
     end
 
-    attr_reader :color, :type, :src, :dest, :captured_type, :src2, :dest2, :new_type, :capture_location, :check, :checkmate
+    attr_reader :color, :type, :src, :dest, :captured_type, :src2, :dest2, :new_type, :capture_location
+    attr_accessor :check, :checkmate # These are set after the fact - it isn't know until the move is applied to the board
     def initialize color, type,
                    src:, dest:,                # for all moves
                    captured_type: nil,         # for a capture
@@ -49,6 +60,8 @@ module Chess
                    new_type: nil,              # for a pawn promption
                    check: false, checkmate: false
       super color
+      raise "Non-pawns can't get promoted" unless :pawn == type if new_type
+      raise "Non-pawns can't capture en-passant" unless :pawn == type if capture_location
       @type, @src, @dest = type, src, dest
       @captured_type = captured_type
       @capture_location = capture_location

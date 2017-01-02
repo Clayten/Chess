@@ -90,13 +90,14 @@ module Chess
     def moves ; self.class.moves board, self end
 
     # Creates the object, doesn't apply it
-    def move dest: , src2: nil, dest2: nil, capture_loc: nil
+    def move dest: , src2: nil, dest2: nil, capture_location: nil
       final    = :white == color ? board.ysize :  1 # where do we get promoted?
-      new_type = :queen if dest.last == final
-      capture_type = board.pieces[dest] || board.pieces[capture_loc]
+      new_type = :queen if :pawn == type && dest.last == final
+      captured = board.pieces[dest] || board.pieces[capture_location]
+      captured_type = captured.type if captured
       check = checkmate = false # TODO fix this...
       Move.new color, type, src: location, dest: dest, new_type: new_type, src2: src2, dest2: dest2,
-        capture_type: capture_type, capture_loc: capture_loc, check: check, checkmate: checkmake
+        captured_type: captured_type, capture_location: capture_location, check: check, checkmate: checkmate
     end
 
     def to_s ; @symbol ||= true ? self.class.unicode[color][type] : self.class.ascii[color][type] end
@@ -147,6 +148,10 @@ module Chess
     end
 
     class Knight < Piece
+      # Possible landing squares, discounting check, etc.
+      def self.possible_moves x, y
+        raise
+      end
       def self.moves board, piece
         board.knight_moves(piece)
       end

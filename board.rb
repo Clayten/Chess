@@ -33,7 +33,7 @@ module Chess
     def square color ; color == :white ? white_square : black_square end
 
     def color_at x, y
-      (((x % 2) + (y % 2)) % 2).zero? ? :white : :black
+      (((x % 2) + (y % 2)) % 2).zero? ? :black : :white
     end
 
     def render
@@ -92,7 +92,6 @@ module Chess
         dest_loc = [dx, y]
         rook_dest_loc = [rdx, y]
         results << src.move(dest: dest_loc, src2: rook_loc, dest2: rook_dest_loc)
-        results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc, src2: rook_loc, dest2: rook_dest_loc)
       }
       results
     end
@@ -108,9 +107,9 @@ module Chess
           dest_loc = [tx, ty]
           if dest = pieces[dest_loc]
             next if dest.color == src.color
-            results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc, captured_type: dest.type)
+            results << src.move(dest: dest_loc)
           else
-            results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc)
+            results << src.move(dest: dest_loc)
           end
         }
       }
@@ -129,10 +128,10 @@ module Chess
           dest_loc = [tx, ty]
           if dest = pieces[dest_loc]
             break if dest.color == src.color
-            results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc, captured_type: dest.type)
+            results << src.move(dest: dest_loc)
             break
           else
-            results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc)
+            results << src.move(dest: dest_loc)
           end
         }
       }
@@ -152,10 +151,10 @@ module Chess
           dest_loc = [tx, ty]
           if dest = pieces[dest_loc]
             break if dest.color == src.color
-            results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc, captured_type: dest.type)
+            results << src.move(dest: dest_loc)
             break
           else
-            results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc)
+            results << src.move(dest: dest_loc)
           end
         }
       }
@@ -173,9 +172,9 @@ module Chess
         dest_loc = [tx, ty]
         if dest = pieces[dest_loc]
           next if dest.color == src.color
-          results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc, captured_type: dest.type)
+          results << src.move(dest: dest_loc)
         else
-          results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc)
+          results << src.move(dest: dest_loc)
         end
       }
       results
@@ -188,44 +187,48 @@ module Chess
       x, y = src_loc = src.location
       offset_y = :white == src.color ? 1     : -1 # which direction are we checking?
       # moving
-      # TODO Can't jump pieces to move 2
       steps = !src.last_move ? 2 : 1 # we can step 1 or 2 if we haven't moved before
       y1, y2 = [(y + offset_y), (y + offset_y * steps)].sort
       y1.upto(y2).each {|ty|
         next if x < 1 || x > xsize || ty < 1 || ty > ysize
         dest_loc = [x, ty]
-        next if dest = pieces[dest_loc]
-        results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc, new_type: (:queen if final == ty))
+        break if dest = pieces[dest_loc]
+        results << src.move(dest: dest_loc)
       }
       # capturing
-      (x - 1).upto(x + 1).each {|tx|
-        next if tx == x # TODO Can't capture straight ahead
-        ty = y + offset_y
+      ty = y + offset_y
+      [x - 1, x + 1].each {|tx|
         next if tx < 1 || tx > xsize || ty < 1 || ty > ysize
         dest_loc = [tx, ty]
         next unless dest = pieces[dest_loc]
         next if dest.color == src.color
-        results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc, captured_type: dest.type, new_type: (:queen if final == ty))
+        results << src.move(dest: dest_loc)
       }
       # capturing en passant
       [-1, 1].each {|offset_x|
         tx = x + offset_x
         ty = y + offset_y
-        next unless (:white == src.color ? 4 : ysize - 3) == y # Check the attacker is on the fifth rank
+        en_passant_rank = (:white == src.color) ? (ysize.div(2)+1) : ysize.div(2)
+        # p [src.color, src.type, src.location, tx, ty]
         next if tx < 1 || tx > xsize
+        next unless en_passant_rank == y
         dest_loc = [tx, ty]
         capture_loc = [tx, y]
         next unless capture = pieces[capture_loc]
         next unless :pawn == capture.type
         next if capture.color == src.color # technically we know this doesn't happen because of the rank and the move limitation, but...
         next unless 1 == capture.number_of_moves # We can only capture en-passant if it's the enemy's first move (If they're on their fourth rank, they did it as a double move)
-        next unless halfmove_number == capture.last_move # We can only capture en-passant directly after the enemy moves
-        results << Move.new(src.color, src.type, src: src_loc, dest: dest_loc, captured_type: capture.type, capture_location: capture_loc, new_type: (:queen if final == ty))
+        next unless halfmove_number == (capture.last_move + 1) # We can only capture en-passant directly after the enemy moves
+        results << src.move(dest: dest_loc, capture_location: capture_loc)
       }
       results
     end
 
     # TODO break out list of possible squares to move into, to iterate over for legal moves, and to properly display A pawn can't, and THIS pawn can't...
+    # The issue is that some moves are complex to generate (castling), or can only happen if a certain square is occupied (en-passant.)
+    # I'd like a list of squares-in-check-by-enemy, to help score the board, and squares-in-check-by-self...
+    # I want to know my pawn will be at risk if I move it two squares, but the pawn sitting in position to capture en-passant doesn't place that square in check until after I move.
+    # I'm not looking to know if a piece will remain safe, that's an issue for recursive checking, but to see if a piece will be safe where placed, for this turn.
 
     # Not for normal use, might leave board in illegal condition
     # NOTE Not incrementing turn #, etc. We can test our position for own-check this way
@@ -259,11 +262,20 @@ module Chess
       mvs ||= []
       return mvs if dont_check_check
       # Now weed out moves that result in check
-      mvs.select {|mv| !test_move(mv).check? } # This is recursive, but doesn't consider check next time
+      mvs.select {|mv| !test_move(mv).check? } # This is once-recursive. It doesn't consider check next time
     end
 
-    # Process a move, after checking if it is allowed
-    def move mv
+    def checkmate?
+      moves.empty? && check?
+    end
+
+    def stalemate?
+      moves.empty? && !check?
+    end
+
+    def check mv
+      raise "Not a move '#{mv.inspect}'" unless mv.respond_to? :src
+      raise "Game finished" unless :in_progress == status
       src_loc, dest_loc = mv.src, mv.dest
       src, dest = pieces[src_loc], pieces[dest_loc]
       raise "No piece at #{mv.src.join(',')}" unless src
@@ -273,24 +285,68 @@ module Chess
       if dest
         raise "Destination occupied by same color" if dest.color == src.color
         raise "Chess does not support regicide" if :king == dest.type
-        captures << dest
       end
       if mv.src2 # secondary piece - during castling only
         src2_loc, dest2_loc = mv.src2, mv.dest2
         src2 = pieces[src2_loc]
+        raise "Castling can't capture" if pieces[dest_loc] || pieces[dest2_loc]
         raise "Only castling involves moving two pieces" unless :king == src.type
         raise "King has already moved" if src.moved?
         raise "Only rooks can castle with kings" unless :rook == pieces[src2_loc].type
         raise "Rook has already moved" if pieces[src2_loc].moved?
-        pieces[dest2_loc] = pieces.delete src2_loc
       end
+      true
+    end
+
+    def triple_repeat_draw
+      3 == states.select {|h| h == states.last }.length
+    end
+
+    def status
+      # Can't return draw
+      if checkmate?
+        :checkmate
+      elsif stalemate?
+        :stalemate
+      else
+        :in_progress
+      end
+    end
+
+    # TODO Make status :checkmate if check && no moves, statemate if no moves, OR in_progress. Get rid of instance_var draw is a state of the game, not the board, as is resignation
+
+    # Process a move, after checking if it is allowed
+    def move mv
+      src_loc, dest_loc = mv.src, mv.dest
+      src, dest = pieces[src_loc], pieces[dest_loc]
+
+      check mv
+      
+      captures << dest if dest
       pieces[dest_loc] = pieces.delete src_loc
-      src = pieces[dest_loc] = Piece.create(mv.color, mv.new_type, self) if mv.new_type # handle pawn promotion
+      src.moved
+      if mv.src2 # secondary piece - during castling only
+        src2_loc, dest2_loc = mv.src2, mv.dest2
+        src2 = pieces[src2_loc]
+        pieces[dest2_loc] = pieces.delete src2_loc if src2
+        src2.moved if src2
+      end
+      if mv.new_type
+        src = pieces[dest_loc] = Piece.create(mv.color, mv.new_type, self)
+      end
       history << mv
+      states << (hsh = state_hash)
       @halfmove_number += 1
       @draw_clock = halfmove_number if true # FIXME Eligible only
-      src.moved
-      src2.moved if src2
+      # TODO set @status
+      # TODO set check/checkmate on mv, if appropriate
+      if check?
+        if moves.empty?
+          mv.checkmate = true
+        else
+          mv.check = true
+        end
+      end
       true
     end
 
@@ -399,16 +455,16 @@ module Chess
       line.split(//)
     end
 
-    def parse_fen lines
-      lines.split('/').map {|l| parse_fen_line l }
+    def parse_fen fen
+      # p [:pf, fen]
+      fen.split('/').map {|l| parse_fen_line l }
     end
 
     def setup
       @pieces = {}
       @captures = []
       @history = []
-      @halfmove_number = 1
-      @status = :in_progress
+      @halfmove_number = 1 # FIXME - set from FEN string, if included, along with .moved? status for kings, rooks, etc.
       @draw_clock = halfmove_number
 
       types = {p: :pawn, k: :king, q: :queen, b: :bishop, n: :knight, r: :rook}
@@ -433,12 +489,15 @@ module Chess
     end
 
     def checkmate ; :checkmate == status end
+    def stalemate ; :stalemate == status end
     def winner ; next_to_play if checkmate end
     def loser  ;      to_play if checkmate end
 
-    attr_reader :xsize, :ysize, :captures, :halfmove_number, :initial_layout, :status, :draw_clock, :history
+    attr_reader :xsize, :ysize, :captures, :halfmove_number, :initial_layout, :draw_clock, :history
     def initialize layout: nil
-      @initial_layout = layouts[layout || :default_8x8]
+      layout ||= :default_8x8
+      @initial_layout = layout.is_a?(Symbol) ? layouts[layout] : layout
+      # p [:init, layout, initial_layout]
       setup
     end
   end

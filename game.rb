@@ -26,30 +26,25 @@ module Chess
       board.display
       loop do
         # TODO check log for draw offer, consider accepting
-        break unless :in_progress == status
-        puts "#{board.to_play} to play#{" - move #{board.halfmove_number}" unless 1 == board.halfmove_number}#{' - check' if board.check?}"
+        break unless :in_progress == board.status
+        puts "#{board.to_play} playing #{" - move #{board.halfmove_number}" unless 1 == board.halfmove_number}#{' - check' if board.check?}"
         mvs = board.moves
         puts "- #{mvs.length} moves available"
-        if mvs.empty?
-          if board.check?
-            @status = :checkmate
-            @winner, @loser = board.next_to_play, board.to_play
-          else
-            @status = :stalement
-          end
-          puts status
-          return status
-        end
+        @winner, @loser = board.next_to_play, board.to_play if board.checkmate?
         mv = rate_moves(mvs.shuffle).first
-        # TODO Check if it's a pawn move, or a capture, then reset the 50-move draw clock
         puts "- Moving #{mv.type} from #{mv.src} to #{mv.dest}#{" capturing #{mv.captured_type}" if mv.captured_type}\n\n"
-        board.move mv
         puts "#{board.to_play} to play#{' - check' if board.check?}"
+        move mv
         board.display
         gets
-        print `clear`
         clr = :white == clr ? :black : :white
       end
+    end
+
+    def move mv
+      # TODO Check if it's a pawn move, or a capture, then reset the 50-move draw clock
+      # Check if enough pieces are left to mate, eventually this is the player's job
+      board.move mv
     end
 
     def status ; board.status end
