@@ -10,44 +10,68 @@ module Chess
 
     public
 
-    def rate_move mv
-      base = 0
-      base += 100 if mv.captured_type
-      base
+    def get_computer_move
+      depth = 2
+      mv = AI.find_move board, depth
     end
 
-    def rate_moves mvs
-      mvs.sort_by {|mv| rate_move mv }.reverse
+    def get_player_move
+      gets.strip
     end
 
-    def play
+    def get_move
+      get_computer_move # FIXME add human
+    end
+
+    def play single_step = true
       puts "#{status}#{" - winner #{winner}" if :checkmate == status}"
       puts
       board.display
       loop do
         # TODO check log for draw offer, consider accepting
-        break unless :in_progress == board.status
-        puts "#{board.to_play} playing #{" - move #{board.halfmove_number}" unless 1 == board.halfmove_number}#{' - check' if board.check?}"
-        mvs = board.moves
-        puts "- #{mvs.length} moves available"
+        (puts "Game ended in #{status}" ; break) unless :in_progress == status
+        print "#{board.to_play} playing#{" - move #{board.halfmove_number}" unless 1 == board.halfmove_number}#{' - check' if board.check?}"
+        # puts "- #{mvs.length} moves available"
         @winner, @loser = board.next_to_play, board.to_play if board.checkmate?
-        mv = rate_moves(mvs.shuffle).first
-        puts "- Moving #{mv.type} from #{mv.src} to #{mv.dest}#{" capturing #{mv.captured_type}" if mv.captured_type}\n\n"
-        puts "#{board.to_play} to play#{' - check' if board.check?}"
+        mv = get_move
+        # mv = mvs.sample
+        puts "- #{mv.description}"
         move mv
+        puts "\n#{board.to_play} to play#{' - check' if board.check?}"
         board.display
-        gets
-        clr = :white == clr ? :black : :white
+        # puts board.distinct_state
+        gets if single_step
       end
     end
 
     def move mv
-      # TODO Check if it's a pawn move, or a capture, then reset the 50-move draw clock
       # Check if enough pieces are left to mate, eventually this is the player's job
       board.move mv
     end
 
-    def status ; board.status end
+    # Returns true if the *current* state has happened two or more times before
+    # If you do not call for draw when at the repeated position, you lose the ability
+    # FIXME Determine if you may cause the position for the third time and call for draw, or if only the opponent can
+    def threefold_repetition
+      count = 0
+      current_state = board.states.last
+      board.states.reverse.each {|state|
+        next unless current_state == state
+        count += 1
+        return true if 3 == count
+      }
+      false
+    end
+
+
+    def status
+      if threefold_repetition
+        :draw
+      else
+        board.status
+      end
+    end
+
     def winner ; board.winner end
     def check? ; board.check? end
     def display ; board.display end
@@ -64,8 +88,8 @@ module Chess
     end
 
     attr_reader :board
-    def initialize
-      @board = Board.new(layout: :default_8x8)
+    def initialize board = nil
+      @board = board || Board.new(layout: :default_8x8)
     end
   end
 end

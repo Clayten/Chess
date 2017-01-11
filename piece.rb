@@ -1,29 +1,14 @@
 module Chess
   class Piece
 
+    def self.diagonal_rays ; [[-1,-1], [1,-1], [-1,1], [1,1]] end
+    def self.cardinal_rays ; [[1,0], [-1,0], [0,1], [0,-1]] end
+
     def self.piece_name ; name.split('::').last.downcase.to_sym end
 
     def self.colors ; [:black, :white] end
-    def self.klasses
-      @klasses ||= begin
-        ks = {}
-        constants.each {|c|
-          k = const_get c
-          next unless k.is_a? Class
-          ks[c.to_s.split('::').last.downcase.to_sym] = k
-        }
-        ks
-      end
-    end
-    def self.types ; klasses.keys end
-
-    # def self.types  ; {king:   :K,
-    #                    queen:  :Q,
-    #                    rook:   :R,
-    #                    bishop: :B,
-    #                    knight: :N,
-    #                    pawn:   :P}
-    # end
+    def self.classes ; @classes ||= begin ; h = {} ; types.each {|t| h[t] = const_get t.to_s.capitalize.to_sym } ; h end end
+    def self.types ; @types ||= %w(king queen rook bishop knight pawn).map &:to_sym end
 
     # https://en.wikipedia.org/wiki/Chess_symbols_in_Unicode
     def self.unicode
@@ -61,7 +46,7 @@ module Chess
     def self.create color, type, board
       raise "Invalid color #{color.inspect}" unless colors.include? color
       raise "Invalid type #{  type.inspect}" unless types.include?(type)
-      klasses[type].new color, board
+      classes[type].new color, board
     end
 
     # algebraic chess notation only
@@ -76,7 +61,7 @@ module Chess
     end
 
     def location
-      board.location_of self
+      @location ||= board.location_of self
     end
 
     def on_color
@@ -85,20 +70,28 @@ module Chess
 
     def moved? ; !!last_move end
 
-    def moved ; @number_of_moves += 1 ; @last_move = board.halfmove_number end
+    def moved ; @number_of_moves += 1 ; @last_move = board.halfmove_number ; @location = nil ; end
 
     def moves ; self.class.moves board, self end
 
     # Creates the object, doesn't apply it
     def move dest: , src2: nil, dest2: nil, capture_location: nil
-      final    = :white == color ? board.ysize :  1 # where do we get promoted?
-      new_type = :queen if :pawn == type && dest.last == final
+      dx, dy = dest
+      final    = :white == color ? board.ysize : 1 # where do we get promoted?
+      new_type = :queen if :pawn == type && dy == final
       captured = board.pieces[dest] || board.pieces[capture_location]
       captured_type = captured.type if captured
       check = checkmate = false # TODO fix this...
       Move.new color, type, src: location, dest: dest, new_type: new_type, src2: src2, dest2: dest2,
         captured_type: captured_type, capture_location: capture_location, check: check, checkmate: checkmate
     end
+
+    # classes are responsible for overriding for enpassant, castling, etc
+    def move_to x, y = nil
+      x, y = x unless y
+      board.move move dest: [x, y]
+    end
+
 
     def to_s ; @symbol ||= true ? self.class.unicode[color][type] : self.class.ascii[color][type] end
 
@@ -107,6 +100,18 @@ module Chess
     def opponent_color ; self.class.other_color color end
 
     def inspect ; "<#{self.class.name}:#{'0x%014x' % (object_id << 1)} #{color}#{' - unmoved' unless last_move}>" end
+
+    def diagonal_rays ; self.class.diagonal_rays end
+    def cardinal_rays ; self.class.cardinal_rays end
+    def move_pattern ; self.class.move_pattern end
+    def threatened_squares include_self = true ; board.available_moves_along_rays x, y, move_pattern, (include_self ? :both : color) end # Includes enemies and friendlies
+    def moves ; threatened_squares(false).map {|dx,dy| move dest: [dx, dy] } end
+    def check? ; board.threatened_squares(color).include? location end
+
+    def x ; location[0] end
+    def y ; location[1] end
+
+    def enemy_color ; board.other_color color end
 
     attr_accessor :board
     attr_reader :color, :last_move, :number_of_moves
@@ -117,50 +122,74 @@ module Chess
       @last_move = nil
     end
 
-    # Order of classes is important to match Unicode symbols
-    class King < Piece
-      def self.check? board, piece
-        board.moves(piece.opponent_color).any? {|type, src, dest, capture| piece == capture }
-      end
-      def check? ; self.class.check? board, self end
-
-      def self.moves board, piece
-        board.adjacent_squares(piece) + board.castling(piece)
-      end
-    end
-
-    class Queen < Piece
-      def self.moves board, piece
-        board.diagonal_lines(piece) + board.cardinal_lines(piece)
-      end
-    end
-
     class Rook < Piece
-      def self.moves board, piece
-        board.cardinal_lines(piece)
-      end
+      def self.move_pattern ; cardinal_rays end
     end
 
     class Bishop < Piece
-      def self.moves board, piece
-        board.diagonal_lines(piece)
+      def self.move_pattern ; diagonal_rays end
+    end
+
+    class Queen < Piece
+      def self.move_pattern ; diagonal_rays + cardinal_rays end
+    end
+
+    class King < Piece
+      def self.move_pattern ; Queen.move_pattern.map {|ray| ray << 1 } end # Same directions, limit one square
+      def moves
+        locations_in_check = board.threatened_squares(color).uniq
+        super.reject {|mv| locations_in_check.include? mv.dest }
       end
     end
 
     class Knight < Piece
-      # Possible landing squares, discounting check, etc.
-      def self.possible_moves x, y
-        raise
+      def self.move_pattern ; [[-1,-2], [-2,-1], [1,-2], [-2,1], [-1, 2], [2, -1], [1, 2], [2, 1]] ; end
+      def threatened_squares # TODO Make other threatened_squares() methods like this one - follow rays and "capture" both.
+        move_pattern.map {|ox,oy|
+          dx = x + ox
+          next if dx < 1 || dx > board.xsize
+          dy = y + oy
+          next if dy < 1 || dy > board.ysize
+          [dx, dy]
+        }.compact
       end
-      def self.moves board, piece
-        board.knight_moves(piece)
-      end
+      def moves ; threatened_squares.map {|dx,dy| dest = board.at(dx, dy) ; next if dest && dest.color == color ; move dest: [dx, dy] }.compact end
     end
 
-    # TODO replace with methods on board. Partly so method names are 'pawn_moves', etc.
     class Pawn < Piece
-      def self.moves board, piece
-        board.pawn_moves(piece)
+      def start_rank ; :white == color ? 2 : 7 end
+      def enpassant_rank ; :white == color ? 5 : 4 end
+      def offset ; board.pawn_offset color end
+      def can_move_double ; start_rank == y && number_of_moves.zero? end
+      def can_capture_enpassant ; enpassant_rank == y end # FIXME What is a proper test on a non-standard board?
+      def can_be_captured_enpassant ; start_rank + offset * 2 == y && 1 == number_of_moves end
+
+      def move_pattern ; [[0,offset,(can_move_double ? 2 : 1)]] end
+      def direct_capture_pattern ; [[-1, offset], [1, offset]] end
+      def enpassant_pattern ; can_capture_enpassant ? direct_capture_pattern.map {|x,y| [x,y,x,0] } : [] end
+      def capture_pattern ; direct_capture_pattern + enpassant_pattern.map {|_,_,x,y| [x,y, :enpassant] } end
+
+      def threatened_squares
+        capture_pattern.map {|ox,oy,type| [x + ox, y + oy, type] }.reject {|tx, ty| tx < 1 || tx > board.xsize || ty < 1 || ty > board.ysize }
+      end
+      def moves
+        results = board.available_moves_along_rays(x, y, move_pattern).map {|dx, dy| move dest: [dx, dy] }
+        results += direct_capture_pattern.map {|dox,doy|
+          dx, dy = x + dox, y + doy
+          dest = board.at dx, dy
+          next unless dest && dest.color != color
+          move dest: [dx, dy]
+        }
+        results += enpassant_pattern.map {|dox,doy,cox,coy|
+          dx, dy = x + dox, y + doy
+          cx, cy = x + cox, y + coy
+          dest    = board.at dx, dy
+          next if dest # is occupied
+          capture = board.at cx, cy
+          next unless capture && capture.color == enemy_color && :pawn == capture.type && capture.can_be_captured_enpassant
+          move dest: [dx, dy], capture_location: [cx, cy]
+        }
+        results.compact
       end
     end
   end

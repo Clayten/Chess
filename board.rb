@@ -4,9 +4,7 @@ module Chess
     attr_reader :states
 
     # Hash state, store, check for triplicates - draw
-    def states ; @states ||= [] end
-
-    def distinct_state ; "<#{self.class.name} #{xsize}x#{ysize} #{pieces.map {|(x,y),pc| "(#{pc.color} #{pc.type}-#{x},#{y}-#{pc.moved?})" }.join(', ')}#{" - cap #{captures.map {|pc| "#{pc.type}" }.join(',')}" unless captures.empty?}>" end
+    def distinct_state ; "<#{self.class.name} #{xsize}x#{ysize} #{pieces.sort_by {|(x,y),_| [x,y] }.map {|(x,y),pc| "(#{pc.color} #{pc.type}-#{x},#{y}-#{pc.moved?})" }.join(', ')}#{" - cap #{captures.map {|pc| "#{pc.type}" }.join(',')}" unless captures.empty?}>" end
 
     def state_hash ; Digest::SHA256.hexdigest distinct_state end
 
@@ -22,10 +20,24 @@ module Chess
     #   [x, y]
     # end
 
+    def add_piece x, y, color, type
+      # p [:add_piece, x, y, color, type]
+      loc = [x, y].map(&:to_i)
+      raise "There's already a #{pieces[loc]} at #{loc.join(',')}" if pieces[loc]
+      pieces[loc] = Piece.create color, type, self
+    end
+
     def location_of piece
       return :captured if captures.include? piece
       loc, _ = pieces.find {|loc, pc| pc == piece }
       loc
+    end
+
+    # syntactic sugar
+    # (x,y) or ([x,y]) -> (piece || nil)
+    def at x, y = nil
+      x, y = x if x.respond_to? :length
+      pieces[[x,y]]
     end
 
     def white_square ; "\u25a0" end
@@ -52,16 +64,11 @@ module Chess
 
     public
 
-    def next_to_play ; Piece.other_color to_play end
+    def other_color c ; Piece.other_color c end
+
+    def next_to_play ; other_color to_play end
 
     def to_play ; Piece.colors[halfmove_number % 2] end
-
-    def check?
-      moves(next_to_play, true).each {|mv|
-        return true if mv.captured_type && :king == mv.captured_type
-      }
-      false
-    end
 
     # These methods return a list of legal moves of a given type, from a location, for a color
 
@@ -73,8 +80,8 @@ module Chess
       raise "Not a king" unless :king == src.type
       return results if src.moved?
       return results unless 8 == xsize && 8 == ysize # So far, we only castle on regulation boards
-      opponent_moves = moves next_to_play, true
-      locations_in_check = opponent_moves.map {|mv| mv.dest }.sort.uniq
+      enemy_moves = moves next_to_play, true
+      locations_in_check = enemy_moves.map {|mv| mv.dest }.sort.uniq
       return results if locations_in_check.include? src_loc # Is the king in check to start with?
       [1, xsize].each {|rx|
         rook_loc = [rx, y]
@@ -96,139 +103,40 @@ module Chess
       results
     end
 
-    # Surrounding squares
-    def adjacent_squares src
+    # direction of movement for a pawn of some color - 1 or -1
+    def pawn_offset color
+      :white == color ? 1 : -1
+    end
+
+    def follow_ray x, y, step_x, step_y
+      loop do
+        x += step_x
+        y += step_y
+        break unless x <= xsize && x >= 1 && y <= ysize && y >= 1
+        yield x, y
+      end
+    end
+
+    # Moves, including those which capture if you specify you can capture (pawns cannot along their movement squares)
+    def available_moves_along_rays x, y, rays, capture_as = nil, maxlen = nil
       results = []
-      x, y = src_loc = src.location
-      (x - 1).upto(x + 1).each {|tx|
-        (y - 1).upto(y + 1).each {|ty|
-          next if tx < 1 || tx > xsize || ty < 1 || ty > ysize
-          next if x == tx && y == ty
-          dest_loc = [tx, ty]
-          if dest = pieces[dest_loc]
-            next if dest.color == src.color
-            results << src.move(dest: dest_loc)
-          else
-            results << src.move(dest: dest_loc)
+      rays.each {|step_x, step_y, maxlen| # A ray is sequentially checked until blocked
+        count = 0 if maxlen
+        follow_ray(x, y, step_x, step_y) {|tx, ty|
+          pc = at(tx, ty)
+          capture = capture_as && pc && (:both == capture_as || pc.color != capture_as)
+          results << [tx, ty] unless pc && !capture
+          break if pc
+          if maxlen
+            count += 1
+            break if count == maxlen
           end
         }
       }
       results
     end
 
-    # Outward along cardinal (N/S, E/W) lines - ranks and files
-    def cardinal_lines src
-      results = []
-      x, y = src_loc = src.location
-      xrays = [(x - 1).downto(1), (x + 1).upto(xsize)].map(&:to_a).map {|xs| xs.zip([y] * xs.length) }
-      yrays = [(y - 1).downto(1), (y + 1).upto(ysize)].map(&:to_a).map {|ys| ([x] *ys.length).zip ys }
-      rays = xrays + yrays
-      rays.each {|ray|
-        ray.each {|tx,ty|
-          dest_loc = [tx, ty]
-          if dest = pieces[dest_loc]
-            break if dest.color == src.color
-            results << src.move(dest: dest_loc)
-            break
-          else
-            results << src.move(dest: dest_loc)
-          end
-        }
-      }
-      results
-    end
-
-    # Outward along diagonal lines
-    def diagonal_lines src
-      results = []
-      x, y = src_loc = src.location
-      tdrays = [(x - 1).downto(1).to_a.zip((y - 1).downto(1).to_a), (x + 1).upto(xsize).to_a.zip((y + 1).upto(ysize).to_a)]
-      burays = [(x - 1).downto(1).to_a.zip((y + 1).upto(ysize).to_a), (x + 1).upto(xsize).to_a.zip((y - 1).downto(1).to_a)]
-      rays = tdrays + burays
-      rays.each {|ray|
-        ray.each {|tx,ty|
-          next unless tx && ty
-          dest_loc = [tx, ty]
-          if dest = pieces[dest_loc]
-            break if dest.color == src.color
-            results << src.move(dest: dest_loc)
-            break
-          else
-            results << src.move(dest: dest_loc)
-          end
-        }
-      }
-      results
-    end
-
-    # Two and one, or one and two, away in all directions
-    def knight_moves src
-      results = []
-      x, y = src_loc = src.location
-      offsets = [[-1, -2], [-2, -1], [1, -2], [2, -1], [-1, 2], [-2, 1], [1, 2], [2, 1]]
-      offsets.each {|ox,oy|
-        tx, ty = (x + ox), (y + oy)
-        next if tx < 1 || tx > xsize || ty < 1 || ty > ysize
-        dest_loc = [tx, ty]
-        if dest = pieces[dest_loc]
-          next if dest.color == src.color
-          results << src.move(dest: dest_loc)
-        else
-          results << src.move(dest: dest_loc)
-        end
-      }
-      results
-    end
-
-    # Foward, attacking to the sides, and capturing en-passant
-    # Here color is more functional, white advances towards black, etc
-    def pawn_moves src
-      results = []
-      x, y = src_loc = src.location
-      offset_y = :white == src.color ? 1     : -1 # which direction are we checking?
-      # moving
-      steps = !src.last_move ? 2 : 1 # we can step 1 or 2 if we haven't moved before
-      y1, y2 = [(y + offset_y), (y + offset_y * steps)].sort
-      y1.upto(y2).each {|ty|
-        next if x < 1 || x > xsize || ty < 1 || ty > ysize
-        dest_loc = [x, ty]
-        break if dest = pieces[dest_loc]
-        results << src.move(dest: dest_loc)
-      }
-      # capturing
-      ty = y + offset_y
-      [x - 1, x + 1].each {|tx|
-        next if tx < 1 || tx > xsize || ty < 1 || ty > ysize
-        dest_loc = [tx, ty]
-        next unless dest = pieces[dest_loc]
-        next if dest.color == src.color
-        results << src.move(dest: dest_loc)
-      }
-      # capturing en passant
-      [-1, 1].each {|offset_x|
-        tx = x + offset_x
-        ty = y + offset_y
-        en_passant_rank = (:white == src.color) ? (ysize.div(2)+1) : ysize.div(2)
-        # p [src.color, src.type, src.location, tx, ty]
-        next if tx < 1 || tx > xsize
-        next unless en_passant_rank == y
-        dest_loc = [tx, ty]
-        capture_loc = [tx, y]
-        next unless capture = pieces[capture_loc]
-        next unless :pawn == capture.type
-        next if capture.color == src.color # technically we know this doesn't happen because of the rank and the move limitation, but...
-        next unless 1 == capture.number_of_moves # We can only capture en-passant if it's the enemy's first move (If they're on their fourth rank, they did it as a double move)
-        next unless halfmove_number == (capture.last_move + 1) # We can only capture en-passant directly after the enemy moves
-        results << src.move(dest: dest_loc, capture_location: capture_loc)
-      }
-      results
-    end
-
-    # TODO break out list of possible squares to move into, to iterate over for legal moves, and to properly display A pawn can't, and THIS pawn can't...
-    # The issue is that some moves are complex to generate (castling), or can only happen if a certain square is occupied (en-passant.)
-    # I'd like a list of squares-in-check-by-enemy, to help score the board, and squares-in-check-by-self...
-    # I want to know my pawn will be at risk if I move it two squares, but the pawn sitting in position to capture en-passant doesn't place that square in check until after I move.
-    # I'm not looking to know if a piece will remain safe, that's an issue for recursive checking, but to see if a piece will be safe where placed, for this turn.
+    # TODO Correct name for 50-move-draw - https://chessprogramming.wikispaces.com/Reversible+moves
 
     # Not for normal use, might leave board in illegal condition
     # NOTE Not incrementing turn #, etc. We can test our position for own-check this way
@@ -240,6 +148,7 @@ module Chess
 
     def mutate
       pcs, caps = pieces.dup, captures.dup
+      @history, @states = history.dup, states.dup
       @pieces, @captures = {}, []
       pcs.each  {|k,v| v = v.dup ; pieces[k]  = v ; v.board = self }
       caps.each {|  v| v = v.dup ; captures  << v ; v.board = self }
@@ -250,30 +159,62 @@ module Chess
       super.mutate
     end
 
-    # iterates over all pieces, returns all moves
-    def moves color = to_play, dont_check_check = false
-      mvs = pieces.values.select {|pc|
-        pc.color == color
-      }.map {|pc|
-        mvs = pc.moves
-        next if mvs.empty?
-        mvs
-      }.compact.inject(&:+)
-      mvs ||= []
-      return mvs if dont_check_check
-      # Now weed out moves that result in check
-      mvs.select {|mv| !test_move(mv).check? } # This is once-recursive. It doesn't consider check next time
+    def enemy_pieces color = to_play ; pieces.values.select {|pc| pc.color != color } end
+    def own_pieces color = to_play ; pieces.values.select {|pc| pc.color == color } end
+
+    # You need to know if your piece is vulnerable to enpassant
+    def threatened_squares color = to_play, consider_enpassant = false # by color's enemy
+      squares = enemy_pieces(color).map {|pc| pc.threatened_squares }.inject(&:+) || []
+      squares.reject! {|x,y,type| :enpassant == type } unless consider_enpassant
+      squares
     end
 
-    def checkmate?
-      moves.empty? && check?
+    def moves color = to_play, quick = false # quick means don't go into the issue of what wouldn't be legal because it could cause check
+      p [:halfmove_number, halfmove_number, :color, color, :quick, quick]
+      mvs = own_pieces(color).map {|pc| pc.moves }.inject(&:+) || []
+      return mvs if quick
+      mvs.reject {|mv| test_move(mv).check?  }
     end
 
-    def stalemate?
-      moves.empty? && !check?
+    # TODO Check if it's a pawn move, or a capture, then reset the 50-move draw clock
+    # TODO break out list of possible squares to move into, to iterate over for legal moves, and to properly display A pawn can't, and THIS pawn can't...
+    # The issue is that some moves are complex to generate (castling), or can only happen if a certain square is occupied (en-passant.)
+    # I'd like a list of squares-in-check-by-enemy, to help score the board, and squares-in-check-by-self...
+    # I want to know my pawn will be at risk if I move it two squares, but the pawn sitting in position to capture en-passant doesn't place that square in check until after I move.
+    # I'm not looking to know if a piece will remain safe, that's an issue for recursive checking, but to see if a piece will be safe where placed, for this turn.
+    # If I move a pawn en-passant, how without recursively examining moves, can I see that it can die? The enemy can't move there to cause check, yet, because my pawn
+    # isn't there. Pawn moves in general, but especially en-passant.
+    # Can I answer this with a list of possibilities that include these specialty attacks? Flag the square as en-passant and ignore it for all non-pawns...
+    # Also, even recursive analysis needs to include static analysis unless it can reach the end. I need to see if a spot is under-guard by me, and the enemy.
+    #
+    # idea - scan enemy moves without check, which terminates. Cache these (@enemy_cache[turn] = ...)
+    # From that, generate the list of attacked squares. These forbid king movement, and can be used for check?() instead of the dup/move/check method.
+    # Main difference being an up-front check and caching of enemy moves, instead of checking each move against a newly generated list on a duplicated board.
+
+    # Separate list of movements, and of captures. For most pieces, one set is the other. For pawns, not so. Ditto castling.
+    # I don't really care where the enemy moves, I care where they control. This is exemplified by fairy chess where the 'coordinator' pieces can capture one or two
+    # distant pieces at the other two corners of a rectangle between itself and the king. You don't care where they can move to know where they can hurt you. But,
+    # you do need to know where they can move to achieve this in order to block that movement.
+
+    # scoring ideas
+    # piece values. squares under guard. strength of pieces under guard. Depth of guard. Both a guared guard, and a doubly-guarded square.
+    # pieces threatened, pieces threatened by weaker pieces.
+    # potential revealed thread. Piece-moves not blocked by their own color.
+    #   In starting position your pawns would be in some threat from the opposing main pieces, because the opposing pawns could move.
+    #   Or is this, number_of_turns_till_threatened, of which higher is better. Or, pieces at threat next turn?
+    #   ...
+
+    def enemy_king color = next_to_play ; king color end
+    def   own_king color = to_play      ; king color end
+    def king color = to_play ; pieces.values.find {|pc| pc.color == color && :king == pc.type } end
+    def kings ; [own_king, enemy_king] end # Not passing color, order will vary
+
+    def enemy_moves
+      moves(next_to_play, true) # We don't care if an enemy move exposes them to check because we'd be dead by then
     end
 
     def check mv
+      # p [:check, :mv, mv]
       raise "Not a move '#{mv.inspect}'" unless mv.respond_to? :src
       raise "Game finished" unless :in_progress == status
       src_loc, dest_loc = mv.src, mv.dest
@@ -298,30 +239,13 @@ module Chess
       true
     end
 
-    def triple_repeat_draw
-      3 == states.select {|h| h == states.last }.length
-    end
-
-    def status
-      # Can't return draw
-      if checkmate?
-        :checkmate
-      elsif stalemate?
-        :stalemate
-      else
-        :in_progress
-      end
-    end
-
-    # TODO Make status :checkmate if check && no moves, statemate if no moves, OR in_progress. Get rid of instance_var draw is a state of the game, not the board, as is resignation
-
     # Process a move, after checking if it is allowed
     def move mv
       src_loc, dest_loc = mv.src, mv.dest
       src, dest = pieces[src_loc], pieces[dest_loc]
 
       check mv
-      
+
       captures << dest if dest
       pieces[dest_loc] = pieces.delete src_loc
       src.moved
@@ -337,9 +261,9 @@ module Chess
       history << mv
       states << (hsh = state_hash)
       @halfmove_number += 1
-      @draw_clock = halfmove_number if true # FIXME Eligible only
-      # TODO set @status
-      # TODO set check/checkmate on mv, if appropriate
+      @draw_clock = halfmove_number if mv.captured_type || :pawn == mv.type # These things reset the 50-move draw-clock
+
+      # This occurs as the next player
       if check?
         if moves.empty?
           mv.checkmate = true
@@ -348,13 +272,6 @@ module Chess
         end
       end
       true
-    end
-
-    def add_piece x, y, color, type
-      # p [:add_piece, x, y, color, type]
-      loc = [x, y]
-      raise "There's already a #{pieces[loc]} at #{loc.join(',')}" if pieces[loc]
-      pieces[loc] = Piece.create color, type, self
     end
 
     # TODO output and parse FEN and X-FEN :
@@ -464,6 +381,7 @@ module Chess
       @pieces = {}
       @captures = []
       @history = []
+      @states = []
       @halfmove_number = 1 # FIXME - set from FEN string, if included, along with .moved? status for kings, rooks, etc.
       @draw_clock = halfmove_number
 
@@ -488,14 +406,39 @@ module Chess
       "#{pieces.length + captures.length} pieces - #{captures.length} captured>"
     end
 
-    def checkmate ; :checkmate == status end
-    def stalemate ; :stalemate == status end
-    def winner ; next_to_play if checkmate end
-    def loser  ;      to_play if checkmate end
+    # FIXME - cache this maybe? Keep it from becoming endlessly recursive so I can use it inside recursive methods.
+    def status
+      # Can't return draw
+      if checkmate?
+        :checkmate
+      elsif stalemate?
+        :stalemate
+      else
+        :in_progress
+      end
+    end
 
-    attr_reader :xsize, :ysize, :captures, :halfmove_number, :initial_layout, :draw_clock, :history
-    def initialize layout: nil
-      layout ||= :default_8x8
+    def check?
+      moves(next_to_play, true).each {|mv|
+        return true if mv.captured_type && :king == mv.captured_type
+      }
+      false
+    end
+
+    def checkmate?
+      moves.empty? && check?
+    end
+
+    def stalemate?
+      moves.empty? && !check?
+    end
+
+    def winner ; next_to_play if checkmate? end
+    def loser  ;      to_play if checkmate? end
+
+    attr_reader :xsize, :ysize, :captures, :halfmove_number, :initial_layout, :draw_clock, :history, :states
+    def initialize layout_ = nil, layout: nil
+      layout ||= layout_ || :default_8x8
       @initial_layout = layout.is_a?(Symbol) ? layouts[layout] : layout
       # p [:init, layout, initial_layout]
       setup

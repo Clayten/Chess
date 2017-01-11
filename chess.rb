@@ -8,12 +8,14 @@ require 'board'
 require 'piece'
 require 'action'
 require 'game'
+require 'ai'
 
 # For now, also just reload them each time
 load 'board.rb'
 load 'piece.rb'
 load 'action.rb'
 load 'game.rb'
+load 'ai.rb'
 
 module Chess
 

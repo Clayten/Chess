@@ -36,7 +36,7 @@ module Chess
         "#{types[type]}#{'x' if captured_type}#{locstr dest}#{"=#{types[new_type]}" if new_type}"
       end
       state = "#{'+' if check}#{'#' if checkmate}"
-      base + state 
+      base + state
     end
 
     def description
