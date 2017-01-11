@@ -63,6 +63,7 @@ module Chess
       score = material_score + moves_score + status_modifier +
           own_threat_count_score +   own_threat_score +   own_reinforcement_score -
         enemy_threat_count_score - enemy_threat_score - enemy_reinforcement_score
+
       # p [:total_score, score, :material_score, material_score, :moves_score, moves_score, :checkmate, :status_modifier, status_modifier, :enemy_threat_count_score, enemy_threat_count_score, :enemy_threat_score, enemy_threat_score, :enemy_reinforcement_score, enemy_reinforcement_score, :own_threat_count_score, own_threat_count_score, :own_threat_score, own_threat_score, :own_reinforcement_score, own_reinforcement_score]
       score.to_i
     end

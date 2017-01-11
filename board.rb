@@ -70,39 +70,6 @@ module Chess
 
     def to_play ; Piece.colors[halfmove_number % 2] end
 
-    # These methods return a list of legal moves of a given type, from a location, for a color
-
-    # Just checks for the king's ability to castle
-    def castling src
-      results = []
-      x, y = src_loc = src.location
-      return results if caller.any? {|c| c =~ /castling/ } # avoid recursion in checking for check across intermediate squares
-      raise "Not a king" unless :king == src.type
-      return results if src.moved?
-      return results unless 8 == xsize && 8 == ysize # So far, we only castle on regulation boards
-      enemy_moves = moves next_to_play, true
-      locations_in_check = enemy_moves.map {|mv| mv.dest }.sort.uniq
-      return results if locations_in_check.include? src_loc # Is the king in check to start with?
-      [1, xsize].each {|rx|
-        rook_loc = [rx, y]
-        rook = pieces[rook_loc]
-        next if !rook || rook.moved?
-        intermediate_squares = (([rx, x].min + 1)...[rx, x].max).to_a
-        next if intermediate_squares.any? {|ix|
-          intermediate_loc = [ix, y]
-          next true if pieces[intermediate_loc]
-          next true if locations_in_check.include? intermediate_loc
-        }
-        # which way are we castling?
-         dx = 8 == rx ? 7 : 3 # destination file for king
-        rdx = 8 == rx ? 6 : 4 # for rook
-        dest_loc = [dx, y]
-        rook_dest_loc = [rdx, y]
-        results << src.move(dest: dest_loc, src2: rook_loc, dest2: rook_dest_loc)
-      }
-      results
-    end
-
     # direction of movement for a pawn of some color - 1 or -1
     def pawn_offset color
       :white == color ? 1 : -1
@@ -166,11 +133,12 @@ module Chess
     def threatened_squares color = to_play, consider_enpassant = false # by color's enemy
       squares = enemy_pieces(color).map {|pc| pc.threatened_squares }.inject(&:+) || []
       squares.reject! {|x,y,type| :enpassant == type } unless consider_enpassant
+      squares.map!    {|x,y,type| [x, y] } unless consider_enpassant
       squares
     end
 
     def moves color = to_play, quick = false # quick means don't go into the issue of what wouldn't be legal because it could cause check
-      p [:halfmove_number, halfmove_number, :color, color, :quick, quick]
+      # p [:halfmove_number, halfmove_number, :color, color, :quick, quick]
       mvs = own_pieces(color).map {|pc| pc.moves }.inject(&:+) || []
       return mvs if quick
       mvs.reject {|mv| test_move(mv).check?  }
@@ -406,10 +374,23 @@ module Chess
       "#{pieces.length + captures.length} pieces - #{captures.length} captured>"
     end
 
-    # FIXME - cache this maybe? Keep it from becoming endlessly recursive so I can use it inside recursive methods.
+    # Returns true if the *current* state has happened two or more times before
+    # You may call for draw at the beginning or end of your turn, but if you don't you lose the chance until it arises again
+    def threefold_repetition?
+      count = 0
+      current_state = states.last
+      states.reverse.each {|state|
+        next unless current_state == state
+        count += 1
+        return true if 3 == count
+      }
+      false
+    end
+
     def status
-      # Can't return draw
-      if checkmate?
+      if threefold_repetition?
+        :draw # Assume the game is halted when possible # FIXME - :draw_possible? Communicate up but don't force
+      elsif checkmate?
         :checkmate
       elsif stalemate?
         :stalemate

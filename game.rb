@@ -49,27 +49,9 @@ module Chess
       board.move mv
     end
 
-    # Returns true if the *current* state has happened two or more times before
-    # If you do not call for draw when at the repeated position, you lose the ability
-    # FIXME Determine if you may cause the position for the third time and call for draw, or if only the opponent can
-    def threefold_repetition
-      count = 0
-      current_state = board.states.last
-      board.states.reverse.each {|state|
-        next unless current_state == state
-        count += 1
-        return true if 3 == count
-      }
-      false
-    end
-
-
     def status
-      if threefold_repetition
-        :draw
-      else
-        board.status
-      end
+      # TODO Include resignation, etc, which is outside the scope of the board
+      board.status
     end
 
     def winner ; board.winner end

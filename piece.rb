@@ -92,7 +92,6 @@ module Chess
       board.move move dest: [x, y]
     end
 
-
     def to_s ; @symbol ||= true ? self.class.unicode[color][type] : self.class.ascii[color][type] end
 
     def type ; self.class.piece_name end
@@ -136,9 +135,24 @@ module Chess
 
     class King < Piece
       def self.move_pattern ; Queen.move_pattern.map {|ray| ray << 1 } end # Same directions, limit one square
+      # TODO Assumes 8x8
+      def castling_moves
+        return [] if moved?
+        return [] if check?
+        return [] unless 8 == board.xsize && 8 == board.ysize # Standard board - fix trying to castle in reduced (eg 3x8) chess problems
+        return [] unless x == 6 && [1,8].include?(y) # King on standard square
+        [[1,3,4],[8,7,5]].map {|rook_x, king_dest, rook_dest|
+          rook = board.at rook_x, y
+          next unless rook && !rook.moved?
+          next if (x > king_dest ? (x - 1).downto(king_dest) : (x + 1).upto(king_dest)).any? {|tx|
+            board.at(tx, y) || board.threatened_squares(color).include?([tx, y])
+          }
+          move dest: [king_dest, y], src2: [rook_x, y], dest2: [rook_dest, y]
+        }.compact
+      end
       def moves
         locations_in_check = board.threatened_squares(color).uniq
-        super.reject {|mv| locations_in_check.include? mv.dest }
+        super.reject {|mv| locations_in_check.include? mv.dest } + castling_moves
       end
     end
 
