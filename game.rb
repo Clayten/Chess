@@ -30,8 +30,7 @@ module Chess
       loop do
         # TODO check log for draw offer, consider accepting
         (puts "Game ended in #{status}" ; break) unless :in_progress == status
-        print "#{board.to_play} playing#{" - move #{board.halfmove_number}" unless 1 == board.halfmove_number}#{' - check' if board.check?}"
-        # puts "- #{mvs.length} moves available"
+        puts "#{board.to_play} playing#{" - move #{board.halfmove_number}" unless 1 == board.halfmove_number}#{' - check' if board.check?}"
         @winner, @loser = board.next_to_play, board.to_play if board.checkmate?
         mv = get_move
         # mv = mvs.sample

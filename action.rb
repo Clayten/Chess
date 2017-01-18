@@ -35,7 +35,7 @@ module Chess
       else
         "#{types[type]}#{'x' if captured_type}#{locstr dest}#{"=#{types[new_type]}" if new_type}"
       end
-      state = "#{'+' if check}#{'#' if checkmate}"
+      state = "#{'+' if check?}#{'#' if checkmate?}"
       base + state
     end
 
@@ -49,6 +49,10 @@ module Chess
     def inspect
       "<#{self.class.name}:#{'0x%014x' % (object_id << 1)} - #{description}>"
     end
+
+    def capture?   ; !!captured_type end
+    def check?     ; check end
+    def checkmate? ; checkmate end
 
     attr_reader :color, :type, :src, :dest, :captured_type, :src2, :dest2, :new_type, :capture_location
     attr_accessor :check, :checkmate # These are set after the fact - it isn't know until the move is applied to the board
