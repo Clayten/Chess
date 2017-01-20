@@ -18,6 +18,9 @@ load 'game.rb'
 load 'ai.rb'
 
 module Chess
+  def self.file_to_letter n ; (n + 9).to_s(36) end
+  def self.xy_to_algebraic x, y ; [file_to_letter(x), y] end
+  def self.locstr loc ; xy_to_algebraic(*loc).join end
 
   def self.cli
     binding.pry

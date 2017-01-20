@@ -14,10 +14,7 @@ module Chess
   class Move < Action
     private
 
-    def file_to_letter n ; (n + 9).to_s(36) end
-    def xy_to_algebraic x, y ; [file_to_letter(x), y] end
-    def locstr loc ; xy_to_algebraic(*loc).join end
-
+    def locstr loc ; Chess.locstr loc end
 
     def s_type ; types[type] end
     def s_capturing ; captured_type ? 'x' : '' end
@@ -33,9 +30,14 @@ module Chess
           'O-O'
         end
       else
-        "#{types[type]}#{'x' if captured_type}#{locstr dest}#{"=#{types[new_type]}" if new_type}"
+        # Rxc7 - could be on c, or on 7. If there's only one, no problme. But if there's a rook on each we need to specify c or 7.
+        # It only matters if there's actual ambiguity, if more than one piece can hit the target.
+        # Need to know the movement of the pieces (knights vs queens) or just use src.threatened_squares.include?(dest)
+        #
+        # if R(g7) + R(c4) -> c7. Rc7. Use the letter if distinct, (c || g)
+        "#{types[type]}#{disambiguator}#{'x' if captured_type}#{locstr dest}#{"=#{types[new_type]}" if new_type}"
       end
-      state = "#{'+' if check?}#{'#' if checkmate?}"
+      state = checkmate? ? '#' : (check? ? '+' : '')
       base + state
     end
 
@@ -50,14 +52,25 @@ module Chess
       "<#{self.class.name}:#{'0x%014x' % (object_id << 1)} - #{description}>"
     end
 
+    # Called after move is player, sets check, disambiguates notation, etc.
+    def update board
+      if board.checkmate?
+        checkmate = true
+      elsif board.check?
+        check = true
+      end
+    end
+
+    def castling? ; !!src2 end
     def capture?   ; !!captured_type end
     def check?     ; check end
     def checkmate? ; checkmate end
 
-    attr_reader :color, :type, :src, :dest, :captured_type, :src2, :dest2, :new_type, :capture_location
+    attr_reader :color, :type, :src, :dest, :captured_type, :src2, :dest2, :new_type, :capture_location, :disambiguator
     attr_accessor :check, :checkmate # These are set after the fact - it isn't know until the move is applied to the board
     def initialize color, type,
                    src:, dest:,                # for all moves
+                   disambiguator: '',          # for any move that could be made by two or more pieces
                    captured_type: nil,         # for a capture
                    capture_location: nil,      # for en-passant
                    src2: nil, dest2: nil,      # for castling
@@ -72,6 +85,7 @@ module Chess
       @src2, @dest2 = src2, dest2
       @new_type = new_type
       @check, @checkmate = check, checkmate
+      @disambiguator = disambiguator
     end
   end
 end

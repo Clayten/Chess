@@ -28,8 +28,8 @@ module Chess
                   pawn: 100}
 
       # Basic strength from pieces
-        own_piece_value =   board.own_pieces.map {|pc| values[pc.type] }.inject(&:+)
-      enemy_piece_value = board.enemy_pieces.map {|pc| values[pc.type] }.inject(&:+)
+        own_piece_value =   board.own_pieces.map {|pc| values[pc.type] }.inject(&:+) || 0
+      enemy_piece_value = board.enemy_pieces.map {|pc| values[pc.type] }.inject(&:+) || 0
       material_score = own_piece_value - enemy_piece_value
 
       # Options are good - counts useless moves too though
@@ -92,7 +92,7 @@ module Chess
 
     # given a board and a move and a depth_remaining, return the score of that move either directly or recursively
     def self.score_move board, move, depth_remaining, analysis_depth = 0, resolve_only_captures = false
-      # p [:score_move, :move, move, :depth_remaining, depth_remaining, :ad, analysis_depth, :roc, resolve_only_captures]
+      p [:score_move, :move, move, :depth_remaining, depth_remaining, :ad, analysis_depth, :roc, resolve_only_captures]
       $b, $m = board, move
       depth_remaining = depth_remaining - 1 unless resolve_only_captures unless analysis_depth > 10
       analysis_depth += 1
@@ -117,6 +117,7 @@ module Chess
             # puts :moves, moves.map(&:inspect) if resolve_only_captures
             scores = moves.map {|mv|
               start_resolving_only_captures = (1 == depth_remaining && (mv.check? || mv.capture?)) # checks and captures
+              p [:started_deepening_search_while_analyzing, mv, :check?, mv.check?, :capture?, mv.capture?] if start_resolving_only_captures
               score_move board, mv, depth_remaining, analysis_depth, (resolve_only_captures || start_resolving_only_captures)
             }
             # p [:move_scores, board.transcript, scores, :max, scores.max]
@@ -130,7 +131,7 @@ module Chess
     # We don't worry about fully-legal moves because we're testing them anyways.
     def self.score_moves board, depth
       # p [:score_moves, depth]
-      rated_moves = board.moves(board.to_play, fully_legal: false).map {|move| rating = score_move board, move, depth ; [move, rating] }
+      rated_moves = board.moves(board.to_play, fully_legal: true).map {|move| rating = score_move board, move, depth ; [move, rating] }
     end
 
     # given a board, return the best move available

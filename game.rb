@@ -11,7 +11,7 @@ module Chess
     public
 
     def get_computer_move
-      depth = 2
+      depth = 3
       mv = AI.find_move board, depth
     end
 

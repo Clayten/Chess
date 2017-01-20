@@ -106,7 +106,7 @@ module Chess
       src, dest = pieces[src_loc], pieces[dest_loc]
       raise "No piece at #{mv.src.join(',')}" unless src
       raise "It isn't #{src.color}'s turn" unless src.color == to_play
-      raise "A #{src.type} can't move from #{mv.src.join(',')} to #{mv.dest.join(',')}" unless src.can_move_to(*dest_loc)
+      raise "A #{src.type} can't move from #{mv.src.join(',')} to #{mv.dest.join(',')}" unless src.can_move_to(*dest_loc) # FIXME How legal? Does it report castling an enpassant? pawn captures only if the destination is occupied?
       # binding.pry if fully_legal
       raise "Move exposes king to check" if dup.move(mv, fully_legal: false).check?(mv.color) if fully_legal
       if dest
@@ -152,13 +152,7 @@ module Chess
       states << (hsh = state_hash) if fully_legal
 
       # Update the move, for transcription purposes, to note if it resulted in check or checkmate. This occurs as the next player
-      if check?
-        if moves.empty?
-          mv.checkmate = true
-        else
-          mv.check = true
-        end
-      end if fully_legal # No need to do all that checking if this is just an existence proof.
+      mv.update self if fully_legal # No need to do all that checking if this is just an existence proof.
       self
     end
 
@@ -242,28 +236,63 @@ module Chess
     def self.load_pgn str
       headers, layout, moves, to_play, castling_rights, halfmove_clock, halfmove_number, score = parse_pgn str
       # p [headers, layout, moves, to_play, castling_rights, halfmove_clock, halfmove_number, score]
-      board = new layout
-      moves.each {|mv| board.do_pgn_move mv }
+      $b = board = new layout
+      moves.each {|mv| board.display ; p [:lpgn, mv] ; board.do_pgn_move mv }
       board
     end
 
+    def find_piece type, dest, disambiguator = ''
+      p [:find_piece, type, dest, disambiguator]
+      pcs = own_pieces.select {|pc| pc.type == type && pc.can_move_to(*dest) }
+      raise "Couldn't find a #{to_play} #{type}#{" on #{disambiguator}" unless disambiguator.empty?} capable of reaching #{Chess.locstr dest}" if pcs.empty?
+
+      if pcs.length == 1
+        pc = pcs.first
+      else
+        p [:pcs, pcs]
+        raise "Ambiguous move text - could refer to one of #{pcs.length} pieces" unless disambiguator && !disambiguator.empty?
+        tx, ty = disambiguator.split(//) if disambiguator
+        ty, tx = tx, nil if tx =~ /^\d+$/
+        tx = tx.to_i(36) - 9 if tx
+        ty = ty.to_i if ty
+        pcs.select! {|pc|
+          if tx && ty
+            pc.x == tx && pc.y == ty
+          else
+            pc.x == tx || pc.y == ty
+          end
+        }
+        raise "Disambiguator incorrect - no candidates" if pcs.empty?
+        raise "Disambiguator not sufficient - left with #{pcs}" unless pcs.length == 1
+        pc = pcs.first
+      end
+    end
+
+    # Takes a move string eg: 'Qxb6', decodes it, finds the piece, and performs the move if legal
     def do_pgn_move pgn
-      type, disambiguator, capture, file, rank, new_type, check, checkmate = parse_pgn_move pgn
-      # p [type, disambiguator, capture, file, rank, new_type, check, checkmate]
-      # find piece
-      # mv = src.move_to(dest_loc)
-      # move mv
+      types = {'K' => :king, 'Q' => :queen, 'R' => :rook, 'B' => :bishop, 'N' => :knight, '' => :pawn}
+      type, disambiguator, capture, file, rank, new_type, check, checkmate, castling = parse_pgn_move pgn
+      p [:dn_pgn_move, type, disambiguator, capture, file, rank, new_type, check, checkmate, castling]
+
+      x = file.to_i(36) - 9
+      y = rank.to_i
+      dest = [x, y]
+
+      pc = find_piece types[type], dest, disambiguator
+      mv = pc.moves.find {|m| next unless m.castling? if castling ; m.dest == dest }
+      p [:doing, mv]
+      move mv
     end
 
     # Must be done on the instance, as it relies on context
     # returns the src_loc and dest_loc
     def parse_pgn_move pgn
       color = to_play
-      last_rank = :white == color ? 1 : board.ysize
+      last_rank = :white == color ? 1 : ysize
       queenside_file, kingside_file = 'c', 'g'
-      type, disambiguator, capture, file, rank, rest = nil
+      type, disambiguator, capture, file, rank, castling, rest = nil
       type_p          = '([KQRBNP]|)' # The 'P' is unusual but not wrong
-      disambiguator_p = '([a-l]|\d+?)'
+      disambiguator_p = '([a-l]?\d*)'
       capture_p       = '(x)'
       file_p          = '([a-l])'
       rank_p          = '(\d+)'
@@ -271,8 +300,8 @@ module Chess
       pattern = /^#{type_p}#{disambiguator_p}?#{capture_p}?#{file_p}#{rank_p}#{rest_p}?$/
 
       case pgn
-      when /O-O-O/ ; type, file, rank = 'K', queenside_file, last_rank
-      when /O-O/   ; type, file, rank = 'K',  kingside_file, last_rank
+      when /O-O-O/ ; type, file, rank, castling = 'K', queenside_file, last_rank, true
+      when /O-O/   ; type, file, rank, castling = 'K',  kingside_file, last_rank, true
       when /.\d/   ; type, disambiguator, capture, file, rank, rest = pgn.match(pattern).captures
       else         ; raise "Unknown move #{pgn}"
       end
@@ -281,7 +310,7 @@ module Chess
       check       = !!(rest =~ /\+/)
       checkmate   = !!(rest =~ /#/)
 
-      [type, disambiguator, capture, file, rank, new_type, check, checkmate]
+      [type, disambiguator, capture, file, rank, new_type, check, checkmate, castling]
     end
 
     def self.status_text status, winner
@@ -296,10 +325,8 @@ module Chess
     def status_text ; self.class.status_text status, winner end
 
     def enpassant_availability
-      return 'FIXME'
-      binding.pry
-      pc = enemy_pieces.select {|pc| :pawn == pc.type }.find {|pc| pc.vulnerable_to_enpassant }
-      pc ? pc.location : '-'
+      pc = enemy_pieces.select {|pc| :pawn == pc.type }.find {|pc| pc.can_be_captured_enpassant }
+      pc ? Chess.locstr(pc.location)[0] : '-'
     end
 
     def to_fen_layout
@@ -335,7 +362,7 @@ module Chess
         headers['SetUp'] = 1
         headers['FEN'] = initial_fen
       end
-      headers['CurrentFEN'] = to_fen unless 1 == halfmove_number
+      headers['CurrentFEN'] = to_fen unless 1 == halfmove_number # Don't show the initial layout again
       (headers.map {|k,v| "[#{k} \"#{v}\"]" } + [transcript]).join("\n")
     end
 

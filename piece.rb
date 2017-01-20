@@ -74,20 +74,37 @@ module Chess
     # Creates the object, doesn't apply it
     def move dest: , src2: nil, dest2: nil, capture_location: nil
       dx, dy = dest
+      disambiguator = disambiguate *dest
       final    = :white == color ? board.ysize : 1 # where do we get promoted?
       new_type = :queen if :pawn == type && dy == final
       captured = board.pieces[dest] || board.pieces[capture_location]
       captured_type = captured.type if captured
       check = threatened_squares(dx, dy).include? board.king(enemy_color)&.location
       checkmate = false # TODO fix this...
-      Move.new color, type, src: location, dest: dest, new_type: new_type, src2: src2, dest2: dest2,
-        captured_type: captured_type, capture_location: capture_location, check: check, checkmate: checkmate
+      Move.new color, type, src: location, dest: dest, disambiguator: disambiguator, src2: src2, dest2: dest2,
+        new_type: new_type, captured_type: captured_type, capture_location: capture_location, check: check, checkmate: checkmate
     end
 
     # classes are responsible for overriding for enpassant, castling, etc
     def move_to x, y = nil
       x, y = x unless y
       board.move move dest: [x, y]
+    end
+
+    def disambiguate tx, ty
+      pcs = board.pieces.values.select {|pc| pc.color == color && pc.type == type && pc != self }
+      pcs.select! {|pc| pc.can_move_to tx, ty }
+      return '' if pcs.empty?
+      if 1 == pcs.length
+        loc2 = pcs.first.location
+        if loc2.first != x
+          Chess.file_to_letter x
+        else
+          y
+        end
+      else
+        Chess.locstr location
+      end
     end
 
     def fen_code ; {king: 'K', queen: 'Q', rook: 'R', knight: 'N', bishop: 'B', pawn: 'P'} ; end
@@ -148,7 +165,7 @@ module Chess
 
     class Knight < Piece
       def self.move_pattern ; [[-1,-2], [-2,-1], [1,-2], [-2,1], [-1, 2], [2, -1], [1, 2], [2, 1]] ; end
-      def threatened_squares tx = x, ty = y ; move_pattern.map {|ox,oy| dx, dy = tx + ox, ty + oy [dx, dy] if valid_xy dx, dy }.compact end
+      def threatened_squares tx = x, ty = y ; move_pattern.map {|ox,oy| dx, dy = tx + ox, ty + oy ; [dx, dy] if valid_xy dx, dy }.compact end
       def moves tx = x, ty = y ; threatened_squares(tx, ty).map {|dx,dy| dest = board.at(dx, dy) ; next if dest&.color == color ; move dest: [dx, dy] }.compact end
     end
 
@@ -162,20 +179,29 @@ module Chess
       def castleability ; [left_rook, right_rook].map {|rook| can_castle? && rook&.can_castle?  } end
       def squares_between check_to ; a, b = [x, check_to].sort ; a.upto(b).map {|tx| yield tx, y } end
 
-      def castling_moves
+      # Where we could castle to
+      def castling_possibilities
         return [] unless 8 == board.xsize && 8 == board.ysize # Ensure standard board - TODO allow castling in nonstandard setups (5x5, etc)
-        return [] if moved? || location != starting_location
-        can_castle_left, can_castle_right = castleability
+        return [] unless can_castle?
         threats = nil
-        [[left_rook, 4, 3, can_castle_left], [right_rook, 6, 7, can_castle_right]].map {|rook, rook_dest, king_dest, can_castle|
+        can_castle_left, can_castle_right = castleability
+        [[left_rook, 4, 3, can_castle_left], [right_rook, 6, 7, can_castle_right]].select {|rook, rook_dest, king_dest, can_castle|
           next unless can_castle
           threats = board.threatened_squares(color) # FIXME Speedtest using .uniq here
           next unless catch(:stop) do
             squares_between(king_dest) {|*loc| next if location == loc ; throw :stop if board.at(loc) || threats.include?(loc) }
-            true
           end
-          move dest: [king_dest, y], src2: [rook.x, y], dest2: [rook_dest, y]
+          true
         }.compact
+      end
+
+      def can_move_to tx, ty ; super || castling_possibilities.map {|_, _, dx, _| [dx, y] }.include?([tx, ty]) end
+
+      # The actual castling moves
+      def castling_moves
+        castling_possibilities.map {|rook, rook_dest, king_dest|
+          move dest: [king_dest, y], src2: [rook.x, y], dest2: [rook_dest, y]
+        }
       end
 
       def moves tx = x, ty = y
@@ -208,30 +234,36 @@ module Chess
       def check? tx = x, ty = y ; super tx, ty, consider_enpassant: true end
 
       def move_squares tx = x, ty = y ; board.available_moves_along_rays(tx, ty, move_pattern).map {|dx, dy| [dx, dy] } end
+
       def threatened_squares tx = x, ty = y ; capture_pattern.map {|ox,oy,enpassant| dx, dy = tx + ox, ty + oy ; [dx, dy, enpassant] if valid_xy dx, dy }.compact end
 
-      def can_move_to x, y ; super || move_squares.include?([x,y]) end
-
-      def moves tx = x, ty = y
-        results = move_squares.map {|dx, dy| move dest: [dx, dy] unless board.at(dx, dy) }.compact
-
-        # FIXME consolidate these routines
-        results += direct_capture_pattern.map {|dox,doy|
+      def capture_squares tx = x, ty = y
+        direct_capture_pattern.map {|dox,doy|
           dx, dy = tx + dox, ty + doy
           dest = board.at dx, dy
           next unless dest && dest.color != color
-          move dest: [dx, dy]
-        }
-        results += enpassant_pattern.map {|dox,doy,cox,coy|
+          [dx, dy]
+        }.compact
+      end
+
+      def enpassant_squares tx = x, ty = y
+        enpassant_pattern.map {|dox,doy,cox,coy|
           dx, dy = tx + dox, ty + doy
           cx, cy = tx + cox, ty + coy
           dest    = board.at dx, dy
           next if dest # is occupied
           capture = board.at cx, cy
           next unless capture && enemy_color == capture.color && :pawn == capture.type && capture.can_be_captured_enpassant
-          move dest: [dx, dy], capture_location: [cx, cy]
-        }
-        results.compact
+          [dx, dy, cx, cy]
+        }.compact
+      end
+
+      def can_move_to x, y ; (move_squares + capture_squares + enpassant_squares.map {|dx,dy,_,_| [dx,dy] }).include?([x,y]) end
+
+      def moves tx = x, ty = y
+        results =       move_squares(tx, ty).map {|dx, dy|         move dest: [dx, dy] unless board.at(dx, dy) }.compact
+        results +=   capture_squares(tx, ty).map {|dx, dy|         move dest: [dx, dy] }
+        results += enpassant_squares(tx, ty).map {|dx, dy, cx, cy| move dest: [dx, dy], capture_location: [cx, cy] }
       end
     end
   end
