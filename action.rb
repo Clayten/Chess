@@ -30,11 +30,6 @@ module Chess
           'O-O'
         end
       else
-        # Rxc7 - could be on c, or on 7. If there's only one, no problme. But if there's a rook on each we need to specify c or 7.
-        # It only matters if there's actual ambiguity, if more than one piece can hit the target.
-        # Need to know the movement of the pieces (knights vs queens) or just use src.threatened_squares.include?(dest)
-        #
-        # if R(g7) + R(c4) -> c7. Rc7. Use the letter if distinct, (c || g)
         "#{types[type]}#{disambiguator}#{'x' if captured_type}#{locstr dest}#{"=#{types[new_type]}" if new_type}"
       end
       state = checkmate? ? '#' : (check? ? '+' : '')

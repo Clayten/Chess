@@ -324,11 +324,6 @@ module Chess
     end
     def status_text ; self.class.status_text status, winner end
 
-    def enpassant_availability
-      pc = enemy_pieces.select {|pc| :pawn == pc.type }.find {|pc| pc.can_be_captured_enpassant }
-      pc ? Chess.locstr(pc.location)[0] : '-'
-    end
-
     def to_fen_layout
       ysize.downto(1).map {|y|
         1.upto(xsize).map {|x|
@@ -338,12 +333,24 @@ module Chess
       }.join('/').gsub(/\.+/) {|s| s.length.to_s }
     end
 
+    def castling_text
+      t = "#{(king(:white)&.to_pgn || '') + (king(:black)&.to_pgn || '')}"
+      t.empty? ? '-' : t
+    end
+
+    def enpassant_availability
+      enemy_pawn = enemy_pieces.select {|pc| :pawn == pc.type }.find {|pc| pc.can_be_captured_enpassant }
+      return '-' unless enemy_pawn && own_pieces.select {|pc| :pawn == pc.type }.find {|pc| pc.moves.any? {|mv| mv.capture? && mv.capture_location == enemy_pawn.location } }
+      Chess.locstr(enemy_pawn.location)[0]
+    end
+
     def to_fen
       "#{to_fen_layout} " +
       "#{:white == to_play ? 'w' : 'b'} " +
-      "#{(king(:white)&.to_pgn || '') + (king(:black)&.to_pgn || '')} " +
+      "#{castling_text} " +
       "#{enpassant_availability} " +
-      "#{halfmove_number - draw_clock} #{(halfmove_number + 1).div(2)}"
+      "#{halfmove_number - draw_clock} " +
+      "#{(halfmove_number + 1).div(2)}"
     end
 
     # X-FEN https://en.wikipedia.org/wiki/X-FEN
