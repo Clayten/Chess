@@ -96,8 +96,7 @@ module Chess
       $b, $m = board, move
       depth_remaining = depth_remaining - 1 unless resolve_only_captures unless analysis_depth > 10
       analysis_depth += 1
-      board = board.dup # FIXME use test_move - maybe rename
-      board.move move
+      board = board.dup.move move
       # board.display if resolve_only_captures
       # gets if resolve_only_captures
       rating = if depth_remaining.zero?
@@ -105,7 +104,7 @@ module Chess
         # p [:move_score, board.transcript, score]
         score
       else
-        moves = board.moves board.to_play, fully_legal: true # FIXME False?
+        moves = board.moves
         if moves.empty?
           # p [:no_more_moves, board.transcript]
           score = board.checkmate? ? -checkmate_score : 0
@@ -131,7 +130,7 @@ module Chess
     # We don't worry about fully-legal moves because we're testing them anyways.
     def self.score_moves board, depth
       # p [:score_moves, depth]
-      rated_moves = board.moves(board.to_play, fully_legal: true).map {|move| rating = score_move board, move, depth ; [move, rating] }
+      rated_moves = board.moves.map {|move| rating = score_move board, move, depth ; [move, rating] }
     end
 
     # given a board, return the best move available

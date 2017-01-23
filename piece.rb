@@ -85,7 +85,7 @@ module Chess
         new_type: new_type, captured_type: captured_type, capture_location: capture_location, check: check, checkmate: checkmate
     end
 
-    # classes are responsible for overriding for enpassant, castling, etc
+    # subclasses are responsible for overriding for enpassant, castling, etc
     def move_to x, y = nil
       x, y = x unless y
       board.move move dest: [x, y]
@@ -94,17 +94,10 @@ module Chess
     def disambiguate tx, ty
       pcs = board.pieces.values.select {|pc| pc.color == color && pc.type == type && pc != self }
       pcs.select! {|pc| pc.can_move_to tx, ty }
-      return '' if pcs.empty?
-      if 1 == pcs.length
-        loc2 = pcs.first.location
-        if loc2.first != x
-          Chess.file_to_letter x
-        else
-          y
-        end
-      else
-        Chess.locstr location
-      end
+      return '' if pcs.empty? # no disambiguator needed
+      return Chess.file_to_letter x unless pcs.any? {|pc| pc.x == x } # If we're the only on this file, use the file
+      return y.to_s unless pcs.any? {|pc| pc.y == y } # If we're the only on this rank, use the rank
+      Chess.locstr location # Else, use the entire location
     end
 
     def fen_code ; {king: 'K', queen: 'Q', rook: 'R', knight: 'N', bishop: 'B', pawn: 'P'} ; end
@@ -173,10 +166,17 @@ module Chess
       def self.move_pattern ; Queen.move_pattern.map {|ray| ray << 1 } end # Same directions, limit one square
       def starting_rank ; :white == color ? 1 : 8 end # TODO Assumes 8x8 - can't castle otherwise
       def starting_location ; [5, starting_rank] end
-      def can_castle? ; starting_location == location && !moved? end
+      def disable_castle_left  ; @can_castle_left  = false end # Castleability needs to be revocable for loading a game from FEN
+      def disable_castle_right ; @can_castle_right = false end
+      def can_castle_left?  ; @can_castle_left end
+      def can_castle_right? ; @can_castle_right end
+      def can_castle? ; starting_location == location && !moved? && (can_castle_left? || can_castle_right?) end
       def  left_rook ; r = board.at(1, starting_rank) ; r if :rook == r&.type && color == r.color end
       def right_rook ; r = board.at(8, starting_rank) ; r if :rook == r&.type && color == r.color end
-      def castleability ; [left_rook, right_rook].map {|rook| can_castle? && rook&.can_castle?  } end
+      def castleability
+        [[left_rook,  can_castle_left?],
+         [right_rook, can_castle_right?]].map {|rook, allowed| allowed && can_castle? && rook&.can_castle?  }
+      end
       def squares_between check_to ; a, b = [x, check_to].sort ; a.upto(b).map {|tx| yield tx, y } end
 
       # Where we could castle to
@@ -213,6 +213,11 @@ module Chess
         can_castle_left, can_castle_right = castleability
         upcase = :white == color
         (can_castle_right ? (upcase ? 'K' : 'k') : '') + (can_castle_left ? (upcase ? 'Q' : 'q') : '')
+      end
+
+      def initialize *a
+        super
+        @can_castle_left = @can_castle_right = true
       end
     end
 

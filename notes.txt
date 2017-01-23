@@ -3,3 +3,70 @@
 "1. Rc6 xc6 2. b7# 1-0"
 "1. Rc6 Ba7 2. Rxc7# 1-0"
 
+
+    # DONE Check if it's a pawn move, or a capture, then reset the 50-move draw clock
+    # DONE break out list of possible squares to move into, to iterate over for legal moves, and to properly display A pawn can't, and THIS pawn can't...
+    # The issue is that some moves are complex to generate (castling), or can only happen if a certain square is occupied (en-passant.)
+    # I'd like a list of squares-in-check-by-enemy, to help score the board, and squares-in-check-by-self...
+    # I want to know my pawn will be at risk if I move it two squares, but the pawn sitting in position to capture en-passant doesn't place that square in check until after I move.
+    # I'm not looking to know if a piece will remain safe, that's an issue for recursive checking, but to see if a piece will be safe where placed, for this turn.
+    # If I move a pawn en-passant, how without recursively examining moves, can I see that it can die? The enemy can't move there to cause check, yet, because my pawn
+    # isn't there. Pawn moves in general, but especially en-passant.
+    # Can I answer this with a list of possibilities that include these specialty attacks? Flag the square as en-passant and ignore it for all non-pawns...
+    # Also, even recursive analysis needs to include static analysis unless it can reach the end. I need to see if a spot is under-guard by me, and the enemy.
+    #
+    # idea - scan enemy moves without check, which terminates. Cache these (@enemy_cache[turn] = ...)
+    # From that, generate the list of attacked squares. These forbid king movement, and can be used for check?() instead of the dup/move/check method.
+    # Main difference being an up-front check and caching of enemy moves, instead of checking each move against a newly generated list on a duplicated board.
+
+    # Separate list of movements, and of captures. For most pieces, one set is the other. For pawns, not so. Ditto castling.
+    # I don't really care where the enemy moves, I care where they control. This is exemplified by fairy chess where the 'coordinator' pieces can capture one or two
+    # distant pieces at the other two corners of a rectangle between itself and the king. You don't care where they can move to know where they can hurt you. But,
+    # you do need to know where they can move to achieve this in order to block that movement.
+
+    # scoring ideas
+    # piece values. squares under guard. strength of pieces under guard. Depth of guard. Both a guared guard, and a doubly-guarded square.
+    # pieces threatened, pieces threatened by weaker pieces.
+    # potential revealed thread. Piece-moves not blocked by their own color.
+    #   In starting position your pawns would be in some threat from the opposing main pieces, because the opposing pawns could move.
+    #   Or is this, number_of_turns_till_threatened, of which higher is better. Or, pieces at threat next turn?
+    #   ...
+
+    # TODO Correct name for 50-move-draw - https://chessprogramming.wikispaces.com/Reversible+moves
+
+    # # Not for normal use, might leave board in illegal condition
+    # # NOTE Not incrementing turn #, etc. We can test our position for own-check this way
+    # def force_move src_loc, dest_loc, src2_loc = nil, dest2_loc = nil
+    #   pieces[dest_loc]  = pieces.delete  src_loc # BAM, it's done. But it may not be legal
+    #   pieces[dest2_loc] = pieces.delete src2_loc if src2_loc # Move the secondary piece if there is one
+    #   cache.clear
+    #   self
+    # end
+
+    # To determine if a move results in check, I want to see what the piece threatens from its destination square.
+    # Ideally that'd be stateless. From 2,1 a knight could move to three squares. All that matters is if the king is
+    # on one of them. But, with the queen for instance, all elements of a ray are under threat up to a blocking piece
+    # which you can't know unless you look at the actual board in question.
+    #
+    # I could generate lists of cells, then weed them out by stopping processing each at the blocker, but
+    # that'd have to take place whereever I wanted this information rather than centrally.
+    #
+    # I want this stateless so that I can say Board.moves_from(2,1,:white,:queen), where 2,1 is the white queen's destination
+    # and see what it will be threatening. I don't want to create a virtual piece to query so a class method would be ideal.
+    #
+    # Or, do I use the original queen. queen.moves_from(2,1), where it'd handle passing in the correct data for the new location.
+
+# Notes
+#
+# ###
+# A piece projects check even if moving to capture would expose its own king to attack # http://www.chessvariants.com/d.chess/faq.html
+# ■□♜
+# ♚♟♖
+# ■□♔
+# White cannot move its pawn, despite the fact that the checking rook is pinned.
+#
+# ###
+#
+# We need the last-time a piece moved (for en-passant)
+# We need the number of times moved (for en-passant)
+# We need a boolean .moved? (for castling)

@@ -11,7 +11,7 @@ module Chess
     public
 
     def get_computer_move
-      depth = 3
+      depth = 2
       mv = AI.find_move board, depth
     end
 
@@ -70,7 +70,9 @@ module Chess
 
     attr_reader :board
     def initialize board = nil
-      @board = board || Board.new(layout: :default_8x8)
+      board = Board.new(layout: :default_8x8) unless board
+      board = Board.new(layout: board) unless board.respond_to? :pieces
+      @board = board
     end
   end
 end

@@ -3,10 +3,9 @@ module Chess
 
     attr_reader :states
 
-    # Hash state, store, check for triplicates - draw
-    # Handles castling rights by reporting if a piece has ever moved
-    # FIXME Doesn't report enpassant status, what should it do?
-    def distinct_state ; "<#{self.class.name} #{xsize}x#{ysize} #{pieces.sort_by {|(x,y),_| [x,y] }.map {|(x,y),pc| "(#{pc.color} #{pc.type}-#{x},#{y}-#{pc.moved?})" }.join(', ')}#{" - cap #{captures.map {|pc| "#{pc.type}" }.join(',')}" unless captures.empty?}>" end
+    # Generates a summary of all game state such that duplicate positions can be detected
+    # Includes .moved? to indicate castling status, the color to play, and the enpassant file if any
+    def distinct_state ; "<#{self.class.name} #{xsize}x#{ysize} #{pieces.sort_by {|(x,y),_| [x,y] }.map {|(x,y),pc| "(#{pc.color} #{pc.type}-#{x},#{y}-#{pc.moved?})" }.join(', ')}#{" - cap #{captures.map {|pc| "#{pc.type}" }.join(',')}" unless captures.empty?} enpassant #{enpassant_availability}>" end
 
     def state_hash ; Digest::SHA256.hexdigest distinct_state end
 
@@ -24,8 +23,6 @@ module Chess
       loc
     end
 
-    # syntactic sugar
-    # (x,y) or ([x,y]) -> (piece || nil)
     def at x, y = nil
       x, y = x if x.respond_to? :length
       pieces[[x,y]]
@@ -98,16 +95,13 @@ module Chess
 
     # See if a move is allowed. Always checks basic plausibility, and defaults to doing a full check.
     def check mv, fully_legal: true
-      # p [:check, :to_play, to_play, :mv, mv, :fully_legal, fully_legal, self.hash]
-      # binding.pry if caller[2..-1].any? {|t| t =~ /`check'/ }
       raise "Not a move '#{mv.inspect}'" unless mv.respond_to? :src
       raise "Game finished" unless :in_progress == status if fully_legal
       src_loc, dest_loc = mv.src, mv.dest
       src, dest = pieces[src_loc], pieces[dest_loc]
       raise "No piece at #{mv.src.join(',')}" unless src
       raise "It isn't #{src.color}'s turn" unless src.color == to_play
-      raise "A #{src.type} can't move from #{mv.src.join(',')} to #{mv.dest.join(',')}" unless src.can_move_to(*dest_loc) # FIXME How legal? Does it report castling an enpassant? pawn captures only if the destination is occupied?
-      # binding.pry if fully_legal
+      raise "A #{src.type} can't move from #{mv.src.join(',')} to #{mv.dest.join(',')}" unless src.can_move_to(*dest_loc)
       raise "Move exposes king to check" if dup.move(mv, fully_legal: false).check?(mv.color) if fully_legal
       if dest
         raise "Destination occupied by same color" if dest.color == src.color
@@ -122,13 +116,11 @@ module Chess
         raise "Only rooks can castle with kings" unless :rook == pieces[src2_loc].type
         raise "Rook has already moved" if pieces[src2_loc].moved?
       end
-      # p [:finished_checking, mv]
       true
     end
 
     # Process a move, after checking if it is allowed
     def move mv, fully_legal: true
-      # p [:move, :to_play, to_play, :mv, mv, :fully_legal, fully_legal]
       src_loc, dest_loc = mv.src, mv.dest
       src, dest = pieces[src_loc], pieces[dest_loc]
 
@@ -201,8 +193,8 @@ module Chess
     end
 
     def self.parse_fen str
-      layout, to_play, castling_rights, halfmove_clock, halfmove_number = str.split(/\s+/)
-      [layout, to_play, castling_rights, halfmove_clock, halfmove_number]
+      layout, to_play, castling_rights, enpassant, halfmove_clock, move_number = str.split(/\s+/)
+      [layout, to_play, castling_rights, enpassant, halfmove_clock, move_number]
     end
 
     def self.parse_transcript transcript
@@ -226,34 +218,32 @@ module Chess
       pgn = pgns.join(' ')
       score = pgn[/\S+$/]
       moves = parse_transcript pgn
-      layout, to_play, castling_rights, halfmove_clock, halfmove_number = parse_fen headers['FEN'] if '1' == headers['SetUp']
+      layout, to_play, castling_rights, enpassant, halfmove_clock, move_number = parse_fen headers['FEN'] if '1' == headers['SetUp']
 
-      [headers, layout, moves, to_play, castling_rights, halfmove_clock, halfmove_number, score]
+      [headers, layout, moves, to_play, castling_rights, enpassant, halfmove_clock, move_number, score]
     end
 
     # FEN is in the FEN header, SetUp header must also appear and be '1'
     # https://en.wikipedia.org/wiki/Chess_notation#Notation_systems_for_computers
     def self.load_pgn str
-      headers, layout, moves, to_play, castling_rights, halfmove_clock, halfmove_number, score = parse_pgn str
-      # p [headers, layout, moves, to_play, castling_rights, halfmove_clock, halfmove_number, score]
+      headers, layout, moves, to_play, castling_rights, enpassant, halfmove_clock, move_number, score = parse_pgn str
+      # p [headers, layout, moves, to_play, castling_rights, enpassant, halfmove_clock, halfmove_number, score]
       $b = board = new layout
       moves.each {|mv| board.display ; p [:lpgn, mv] ; board.do_pgn_move mv }
       board
     end
 
     def find_piece type, dest, disambiguator = ''
-      p [:find_piece, type, dest, disambiguator]
       pcs = own_pieces.select {|pc| pc.type == type && pc.can_move_to(*dest) }
       raise "Couldn't find a #{to_play} #{type}#{" on #{disambiguator}" unless disambiguator.empty?} capable of reaching #{Chess.locstr dest}" if pcs.empty?
 
       if pcs.length == 1
         pc = pcs.first
       else
-        p [:pcs, pcs]
         raise "Ambiguous move text - could refer to one of #{pcs.length} pieces" unless disambiguator && !disambiguator.empty?
         tx, ty = disambiguator.split(//) if disambiguator
         ty, tx = tx, nil if tx =~ /^\d+$/
-        tx = tx.to_i(36) - 9 if tx
+        tx = Chess.letter_to_file tx if tx
         ty = ty.to_i if ty
         pcs.select! {|pc|
           if tx && ty
@@ -272,15 +262,13 @@ module Chess
     def do_pgn_move pgn
       types = {'K' => :king, 'Q' => :queen, 'R' => :rook, 'B' => :bishop, 'N' => :knight, '' => :pawn}
       type, disambiguator, capture, file, rank, new_type, check, checkmate, castling = parse_pgn_move pgn
-      p [:dn_pgn_move, type, disambiguator, capture, file, rank, new_type, check, checkmate, castling]
 
-      x = file.to_i(36) - 9
+      x = Chess.letter_to_file file
       y = rank.to_i
       dest = [x, y]
 
       pc = find_piece types[type], dest, disambiguator
       mv = pc.moves.find {|m| next unless m.castling? if castling ; m.dest == dest }
-      p [:doing, mv]
       move mv
     end
 
@@ -373,6 +361,8 @@ module Chess
       (headers.map {|k,v| "[#{k} \"#{v}\"]" } + [transcript]).join("\n")
     end
 
+    def parse_fen_layout fen ; fen.split('/').map {|line| line.gsub(/\d+/) {|n| '.' * n.to_i }.split(//) } end
+
     def self.layouts
       {
           empty_8x8: '8/8/8/8/8/8/8/8',
@@ -381,14 +371,19 @@ module Chess
     end
     def layouts ; self.class.layouts end
 
-    def parse_fen_line line
+    # Note: Because castling rights default to true, this returns the INVERSE of the specified rights - to be disabled
+    def self.parse_castling_rights str
+      raise "Improper castling rights '#{str}'" unless str =~ /^([kq]{1,4}|-)$/i
+      syms = {'Q' => [:white, :left],
+              'K' => [:white, :right],
+              'q' => [:black, :left],
+              'k' => [:black, :right]}
+      all = syms.values
+      return all if '-' == str
+      indicated_rights = str.scan(/./).map {|c| syms[c] }
+      all - indicated_rights
     end
-
-    # R6R/1B6 -> [[R, ...],[.,B, ...]]
-    # R6R -> R......R -> [R,.,.,.,.,.,.,R]
-    def parse_fen fen
-      fen.split('/').map {|line| line.gsub(/\d+/) {|n| '.' * n.to_i }.split(//) }
-    end
+    def parse_castling_rights str ; self.class.parse_castling_rights str end
 
     def setup
       @pieces = {}
@@ -396,22 +391,42 @@ module Chess
       @history = []
       @states = []
       @cache = {}
-      @halfmove_number = 1 # FIXME - set from FEN string, if included, along with .moved? status for kings, rooks, etc.
+      @halfmove_number = 1
       @draw_clock = halfmove_number
 
       types = {p: :pawn, k: :king, q: :queen, b: :bishop, n: :knight, r: :rook}
 
-      layout = parse_fen initial_layout
+      fen_layout, fen_to_play, fen_castling_rights, fen_enpassant, fen_halfmove_clock, fen_move_number = self.class.parse_fen initial_layout
+      layout = parse_fen_layout fen_layout
+
       @ysize = layout.length
       @xsize = layout.first.length
 
-      layout.zip(ysize.downto(1).to_a).each {|pieces, y|
-        pieces.zip(1.upto(xsize).to_a) {|pc, x|
+      layout.zip(ysize.downto(1).to_a).each {|pieces, y| # walk through by rank
+        pieces.zip(1.upto(xsize).to_a) {|pc, x|          # and by file
           next unless type = types[pc.downcase.to_sym]
           color = (pc == pc.upcase) ? :white : :black
           add_piece x, y, color, type
         }
       }
+
+      # If we were supplied with a full X-FEN string, handle all fields of it
+      if fen_move_number # We either take just a layout, or all fields
+        @halfmove_number = fen_move_number.to_i + ('w' == fen_to_play ? 0 : 1)
+        @draw_clock = halfmove_number - fen_halfmove_clock.to_i
+        raise "Incorrect draw clock" unless draw_clock > 0
+        # Reads castling rights, which default to true, and disables them if they are NOT included in the line. 'KQk' -> disable black queenside castling
+        parse_castling_rights(fen_castling_rights).each {|color, side| next unless k = king(color) ; side == :left ? k.disable_castle_left : k.disable_castle_right }
+        if '-' != fen_enpassant
+          pawn_rank = 'w' == to_play ? 5 : 4 # If it's white's turn, black's pawn must have just made a double-move, to 5...
+          file = Chess.letter_to_file fen_enpassant
+          pawn = at(file, pawn_rank)
+          raise "No pawn vulnerable to enpassant" unless pawn
+          raise "Incorrectly specified enpassant" if pawn.color == to_play
+          pawn.moved # Tell this pawn it just moved
+        end
+      end
+
       self
     end
 
@@ -428,14 +443,14 @@ module Chess
       states.reverse.each {|state|
         next unless current_state == state
         count += 1
-        return true if 3 == count
+        return true if 3 == count # break as soon as we find a third
       }
       false
     end
 
     def status
       if threefold_repetition?
-        :draw # Assume the game is halted when possible # FIXME - :draw_possible? Communicate up but don't force
+        :draw # TODO Add draw as a move
       elsif checkmate?
         :checkmate
       elsif stalemate?
@@ -464,7 +479,9 @@ module Chess
     def       king color = to_play ; pieces.values.find {|pc| pc.color == color && :king == pc.type } end
     def   own_king color = to_play      ; king color end
     def enemy_king color = next_to_play ; king color end
-    def kings ; [own_king, enemy_king] end # Not passing color, order will vary
+    def white_king ; king :white end
+    def black_king ; king :black end
+    def kings ; [white_king, black_king] end
 
     # We don't care if an enemy move exposes them to check because we'd be dead by then
     def enemy_moves ; moves(next_to_play, fully_legal: false) end
@@ -475,6 +492,8 @@ module Chess
     def cache ; @cache ||= {} end
 
     attr_reader :xsize, :ysize, :captures, :halfmove_number, :initial_layout, :initial_fen, :draw_clock, :history, :states
+
+    # Takes a layout name, or a FEN layout, or a complete X-FEN string
     def initialize layout_ = nil, layout: nil
       layout ||= layout_ || :default_8x8
       @initial_layout = layout.is_a?(Symbol) ? layouts[layout] : layout
@@ -483,55 +502,3 @@ module Chess
     end
   end
 end
-
-    # TODO Check if it's a pawn move, or a capture, then reset the 50-move draw clock
-    # TODO break out list of possible squares to move into, to iterate over for legal moves, and to properly display A pawn can't, and THIS pawn can't...
-    # The issue is that some moves are complex to generate (castling), or can only happen if a certain square is occupied (en-passant.)
-    # I'd like a list of squares-in-check-by-enemy, to help score the board, and squares-in-check-by-self...
-    # I want to know my pawn will be at risk if I move it two squares, but the pawn sitting in position to capture en-passant doesn't place that square in check until after I move.
-    # I'm not looking to know if a piece will remain safe, that's an issue for recursive checking, but to see if a piece will be safe where placed, for this turn.
-    # If I move a pawn en-passant, how without recursively examining moves, can I see that it can die? The enemy can't move there to cause check, yet, because my pawn
-    # isn't there. Pawn moves in general, but especially en-passant.
-    # Can I answer this with a list of possibilities that include these specialty attacks? Flag the square as en-passant and ignore it for all non-pawns...
-    # Also, even recursive analysis needs to include static analysis unless it can reach the end. I need to see if a spot is under-guard by me, and the enemy.
-    #
-    # idea - scan enemy moves without check, which terminates. Cache these (@enemy_cache[turn] = ...)
-    # From that, generate the list of attacked squares. These forbid king movement, and can be used for check?() instead of the dup/move/check method.
-    # Main difference being an up-front check and caching of enemy moves, instead of checking each move against a newly generated list on a duplicated board.
-
-    # Separate list of movements, and of captures. For most pieces, one set is the other. For pawns, not so. Ditto castling.
-    # I don't really care where the enemy moves, I care where they control. This is exemplified by fairy chess where the 'coordinator' pieces can capture one or two
-    # distant pieces at the other two corners of a rectangle between itself and the king. You don't care where they can move to know where they can hurt you. But,
-    # you do need to know where they can move to achieve this in order to block that movement.
-
-    # scoring ideas
-    # piece values. squares under guard. strength of pieces under guard. Depth of guard. Both a guared guard, and a doubly-guarded square.
-    # pieces threatened, pieces threatened by weaker pieces.
-    # potential revealed thread. Piece-moves not blocked by their own color.
-    #   In starting position your pawns would be in some threat from the opposing main pieces, because the opposing pawns could move.
-    #   Or is this, number_of_turns_till_threatened, of which higher is better. Or, pieces at threat next turn?
-    #   ...
-
-    # TODO Correct name for 50-move-draw - https://chessprogramming.wikispaces.com/Reversible+moves
-
-    # # Not for normal use, might leave board in illegal condition
-    # # NOTE Not incrementing turn #, etc. We can test our position for own-check this way
-    # def force_move src_loc, dest_loc, src2_loc = nil, dest2_loc = nil
-    #   pieces[dest_loc]  = pieces.delete  src_loc # BAM, it's done. But it may not be legal
-    #   pieces[dest2_loc] = pieces.delete src2_loc if src2_loc # Move the secondary piece if there is one
-    #   cache.clear
-    #   self
-    # end
-
-    # To determine if a move results in check, I want to see what the piece threatens from its destination square.
-    # Ideally that'd be stateless. From 2,1 a knight could move to three squares. All that matters is if the king is
-    # on one of them. But, with the queen for instance, all elements of a ray are under threat up to a blocking piece
-    # which you can't know unless you look at the actual board in question.
-    #
-    # I could generate lists of cells, then weed them out by stopping processing each at the blocker, but
-    # that'd have to take place whereever I wanted this information rather than centrally.
-    #
-    # I want this stateless so that I can say Board.moves_from(2,1,:white,:queen), where 2,1 is the white queen's destination
-    # and see what it will be threatening. I don't want to create a virtual piece to query so a class method would be ideal.
-    #
-    # Or, do I use the original queen. queen.moves_from(2,1), where it'd handle passing in the correct data for the new location.
