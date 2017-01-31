@@ -35,12 +35,11 @@ module Chess
       # Options are good - counts useless moves too though
         own_moves = board.moves(fully_legal: false)
       enemy_moves = board.enemy_moves
-      moves_score = (own_moves.length - enemy_moves.length) * 5
+      moves_score = (own_moves.length - enemy_moves.length) * 25
 
       # The enemy's threats toward the current player
       enemy_threat_count_score = enemy_threat_score = enemy_reinforcement_score = 0
-      own_threatened_squares = board.threatened_squares
-      own_threatened_squares.each {|x,y|
+      board.threatened_squares(board.next_to_play).each {|x,y|
         enemy_threat_count_score += 3
         next unless pc = board.at(x, y)
         if board.to_play == pc.color
@@ -54,8 +53,7 @@ module Chess
 
       # The current player's threats and self-reinforcement
       own_threat_count_score = own_threat_score = own_reinforcement_score = 0
-      enemy_threatened_squares = board.threatened_squares board.next_to_play
-      enemy_threatened_squares.each {|x,y|
+      board.threatened_squares.each {|x,y|
         own_threat_count_score += 3
         next unless pc = board.at(x, y)
         if board.to_play != pc.color
@@ -77,11 +75,11 @@ module Chess
       score = material_score + moves_score + status_modifier +
           own_threat_count_score +   own_threat_score +   own_reinforcement_score -
         enemy_threat_count_score - enemy_threat_score - enemy_reinforcement_score
-      # p [:total_score, score, :material_score, material_score, :moves_score, moves_score, :checkmate, :status_modifier, status_modifier, :enemy_threat_count_score, enemy_threat_count_score, :enemy_threat_score, enemy_threat_score, :enemy_reinforcement_score, enemy_reinforcement_score, :own_threat_count_score, own_threat_count_score, :own_threat_score, own_threat_score, :own_reinforcement_score, own_reinforcement_score]
+      p [:total_score, score, :material_score, material_score, :moves_score, moves_score, :checkmate, :status_modifier, status_modifier, :enemy_threat_count_score, enemy_threat_count_score, :enemy_threat_score, enemy_threat_score, :enemy_reinforcement_score, enemy_reinforcement_score, :own_threat_count_score, own_threat_count_score, :own_threat_score, own_threat_score, :own_reinforcement_score, own_reinforcement_score]
 
       score = score.to_i
     ensure
-      # p [:score, score]
+      # p [:rating, score]
       score
     end
 
@@ -92,9 +90,9 @@ module Chess
 
     # given a board and a move and a depth_remaining, return the score of that move either directly or recursively
     def self.score_move board, move, depth_remaining, analysis_depth = 0, resolve_only_captures = false
-      p [:score_move, :move, move, :depth_remaining, depth_remaining, :ad, analysis_depth, :roc, resolve_only_captures]
+      # p [:score_move, :move, move, :depth_remaining, depth_remaining, :ad, analysis_depth, :roc, resolve_only_captures] #  unless 1 == depth_remaining
       $b, $m = board, move
-      depth_remaining = depth_remaining - 1 unless resolve_only_captures unless analysis_depth > 10
+      depth_remaining -= 1 if !resolve_only_captures || analysis_depth > 2
       analysis_depth += 1
       board = board.dup.move move
       # board.display if resolve_only_captures
@@ -109,28 +107,29 @@ module Chess
           # p [:no_more_moves, board.transcript]
           score = board.checkmate? ? -checkmate_score : 0
         else
-          moves.select! {|mv| mv.capture? } if resolve_only_captures
+          moves.select! {|mv| mv.capture? } if resolve_only_captures # FIXME || mv.check?
           if moves.empty?
             score = rate_position board
           else
             # puts :moves, moves.map(&:inspect) if resolve_only_captures
             scores = moves.map {|mv|
-              start_resolving_only_captures = (1 == depth_remaining && (mv.check? || mv.capture?)) # checks and captures
-              p [:started_deepening_search_while_analyzing, mv, :check?, mv.check?, :capture?, mv.capture?] if start_resolving_only_captures
-              score_move board, mv, depth_remaining, analysis_depth, (resolve_only_captures || start_resolving_only_captures)
+              start_resolving_only_captures = false # (1 == depth_remaining && (mv.check? || mv.capture?)) # checks and captures
+              # p [:started_deepening_search_while_analyzing, mv, :check?, mv.check?, :capture?, mv.capture?] if start_resolving_only_captures
+              score = -score_move(board, mv, depth_remaining, analysis_depth, (resolve_only_captures || start_resolving_only_captures))
             }
             # p [:move_scores, board.transcript, scores, :max, scores.max]
             scores.max
           end
         end
       end
-      -rating # negative, because this is the rating of the next player, after the move was made
+      # p [:score_move_done, analysis_depth, depth_remaining, resolve_only_captures, rating, move]
+      rating # negative, because this is the rating of the next player, after the move was made
     end
 
     # We don't worry about fully-legal moves because we're testing them anyways.
     def self.score_moves board, depth
       # p [:score_moves, depth]
-      rated_moves = board.moves.map {|move| rating = score_move board, move, depth ; [move, rating] }
+      rated_moves = board.moves.map {|move| rating = -score_move(board, move, depth) ; [move, rating] }
     end
 
     # given a board, return the best move available

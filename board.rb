@@ -67,7 +67,7 @@ module Chess
       super.mutate
     end
 
-    def follow_ray x, y, step_x, step_y
+    def follow_vector x, y, step_x, step_y
       loop do
         x += step_x
         y += step_y
@@ -76,11 +76,11 @@ module Chess
       end
     end
 
-    def available_moves_along_rays x, y, rays, maxlen: nil
+    def available_moves_along_vectors x, y, vectors, maxlen: nil
       results = []
-      rays.each {|step_x, step_y, maxlen| # A ray is sequentially checked until blocked
+      vectors.each {|step_x, step_y, maxlen| # A vector is sequentially checked until blocked
         count = 0 if maxlen
-        follow_ray(x, y, step_x, step_y) {|tx, ty|
+        follow_vector(x, y, step_x, step_y) {|tx, ty|
           pc = at(tx, ty)
           results << [tx, ty]
           break if pc
@@ -95,6 +95,7 @@ module Chess
 
     # See if a move is allowed. Always checks basic plausibility, and defaults to doing a full check.
     def check mv, fully_legal: true
+      # p [:check, halfmove_number, to_play, fully_legal, mv, clr[0...-11]]
       raise "Not a move '#{mv.inspect}'" unless mv.respond_to? :src
       raise "Game finished" unless :in_progress == status if fully_legal
       src_loc, dest_loc = mv.src, mv.dest
@@ -124,7 +125,7 @@ module Chess
       src_loc, dest_loc = mv.src, mv.dest
       src, dest = pieces[src_loc], pieces[dest_loc]
 
-      check mv, fully_legal: fully_legal
+      check mv, fully_legal: fully_legal # if fully_legal # FIXME needs to always be called - however sometimes fails
 
       captures << dest if dest
       pieces[dest_loc] = pieces.delete src_loc
@@ -148,32 +149,31 @@ module Chess
       self
     end
 
+    def clr ; caller.reject {|l| l =~ /pry/ }.map {|s| s.split(/\//).last } end
+
     # You need to know if your piece is vulnerable to enpassant
-    # FIXME Make this own_pieces - reverse the meaning
+    # Squares THEATENED BY color
     def threatened_squares color = to_play, consider_enpassant: false # by color's enemy
-      # p [:b_ts, halfmove_number, color, consider_enpassant]
-      # squares = cache[[:threats, halfmove_number, color]] ||= begin
-        squares = enemy_pieces(color).map {|pc| pc.threatened_squares }.inject(&:+) || []
+      squares = cache[[:threats, halfmove_number, color, consider_enpassant]] ||= begin
+        # p [:b_ts, halfmove_number, color, consider_enpassant, clr]
+        squares = own_pieces(color).map {|pc| pc.threatened_squares }.inject(&:+) || []
+        squares = squares.reject {|x,y,type| :enpassant == type }.map {|x,y,type| [x, y] } unless consider_enpassant
         # squares.sort! # FIXME benchmark
-      # end
-      unless consider_enpassant
-        squares = squares.reject {|x,y,type| :enpassant == type }.map {|x,y,type| [x, y] }
       end
-      squares
     end
 
     def moves color = to_play, fully_legal: true # Fully-legal moves need to be evaluated to see if they cause inadvertent check
       # FIXME Cache fully and pseudo-legal moves. Use fully to supply partial, so avoid fetching twice.
-      # cache[[:moves, halfmove_number, color]] ||= begin
-        # p [:moves, :halfmove_number, halfmove_number, :color, color, :fully_legal, fully_legal]
+      cache[[:moves, halfmove_number, color, fully_legal]] ||= begin
+        # p [:moves, :halfmove_number, halfmove_number, :color, color, :fully_legal, fully_legal, history.last]
         # caller.each {|c| break if c =~ /pry/ ; puts c }
         mvs = own_pieces(color).map {|pc| pc.moves }.inject(&:+) || []
         # mvs.sort_by! {|mv| [mv.src, mv.dest] } # FIXME slow
         mvs
         # p [:moves2, fully_legal]
-        return mvs unless fully_legal
+        return mvs unless fully_legal # Don't cache because we aren't generating a proper answer
         mvs.reject {|mv| dup.move(mv, fully_legal: false).check?(color) } # not 'fully-legal'. Check for check isn't endlessly recursive
-      # end
+      end
     end
 
     # TODO output and parse FEN and X-FEN :
@@ -216,6 +216,9 @@ module Chess
         end
       }
       pgn = pgns.join(' ')
+      pgn = pgn.gsub(/{[^}]*}/,'').strip # remove comments
+      pgn = pgn.gsub(/\d+\. \.{3}/,'') # 1. e4 {foo} 1. ... e5
+      pgn = pgn.gsub(/\s{2,}/,' ')
       score = pgn[/\S+$/]
       moves = parse_transcript pgn
       layout, to_play, castling_rights, enpassant, halfmove_clock, move_number = parse_fen headers['FEN'] if '1' == headers['SetUp']
@@ -225,11 +228,11 @@ module Chess
 
     # FEN is in the FEN header, SetUp header must also appear and be '1'
     # https://en.wikipedia.org/wiki/Chess_notation#Notation_systems_for_computers
+    # TODO Load the player names and other headers
     def self.load_pgn str
       headers, layout, moves, to_play, castling_rights, enpassant, halfmove_clock, move_number, score = parse_pgn str
-      # p [headers, layout, moves, to_play, castling_rights, enpassant, halfmove_clock, halfmove_number, score]
       $b = board = new layout
-      moves.each {|mv| board.display ; p [:lpgn, mv] ; board.do_pgn_move mv }
+      moves.each {|mv| board.do_pgn_move mv ; puts "Moved #{str}" ; board.display }
       board
     end
 
@@ -258,20 +261,6 @@ module Chess
       end
     end
 
-    # Takes a move string eg: 'Qxb6', decodes it, finds the piece, and performs the move if legal
-    def do_pgn_move pgn
-      types = {'K' => :king, 'Q' => :queen, 'R' => :rook, 'B' => :bishop, 'N' => :knight, '' => :pawn}
-      type, disambiguator, capture, file, rank, new_type, check, checkmate, castling = parse_pgn_move pgn
-
-      x = Chess.letter_to_file file
-      y = rank.to_i
-      dest = [x, y]
-
-      pc = find_piece types[type], dest, disambiguator
-      mv = pc.moves.find {|m| next unless m.castling? if castling ; m.dest == dest }
-      move mv
-    end
-
     # Must be done on the instance, as it relies on context
     # returns the src_loc and dest_loc
     def parse_pgn_move pgn
@@ -290,16 +279,32 @@ module Chess
       case pgn
       when /O-O-O/ ; type, file, rank, castling = 'K', queenside_file, last_rank, true
       when /O-O/   ; type, file, rank, castling = 'K',  kingside_file, last_rank, true
-      when /.\d/   ; type, disambiguator, capture, file, rank, rest = pgn.match(pattern).captures
-      else         ; raise "Unknown move #{pgn}"
+      when /[a-l]\d/ ; type, disambiguator, capture, file, rank, rest = pgn.match(pattern).captures
+      else           ; raise "Unknown move #{pgn}"
       end
       type ||= 'P'
       new_type, _ = rest.match(/=(.)/).captures if rest =~ /=/
       check       = !!(rest =~ /\+/)
       checkmate   = !!(rest =~ /#/)
+      # 'rest' also contains ? and ! markers, as part of annotation, which may be useful but are not currently used
 
       [type, disambiguator, capture, file, rank, new_type, check, checkmate, castling]
     end
+
+    def create_pgn_move pgn
+      types = {'K' => :king, 'Q' => :queen, 'R' => :rook, 'B' => :bishop, 'N' => :knight, '' => :pawn}
+      type, disambiguator, capture, file, rank, new_type, check, checkmate, castling = parse_pgn_move pgn
+
+      x = Chess.letter_to_file file
+      y = rank.to_i
+      dest = [x, y]
+
+      pc = find_piece types[type], dest, disambiguator
+      mv = pc.moves.find {|m| next unless m.castling? if castling ; m.dest == dest }
+    end
+
+    # Takes a move string eg: 'Qxb6', decodes it, finds the piece, and performs the move if legal
+    def do_pgn_move pgn ; move create_pgn_move pgn end
 
     def self.status_text status, winner
       case status
@@ -461,7 +466,7 @@ module Chess
     end
 
     # If there is a king, is it in check? This is to allow simplified test scenarios with one side being incomplete.
-    def check? color = to_play ; k = king color ; threatened_squares(color).include? k.location if k end
+    def check? color = to_play ; k = king color ; threatened_squares(other_color color).include? k.location if k end
 
     def checkmate? color = to_play ; moves(color).empty? && check?(color) end
     def stalemate? ; moves.empty? && !check?  end

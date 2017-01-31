@@ -16,11 +16,17 @@ module Chess
     end
 
     def get_player_move
-      gets.strip
+      print "Enter move: "
+      txt = gets.strip
+      board.create_pgn_move txt
+    rescue StandardError => e
+      p [:rescued, e]
+      retry
     end
 
     def get_move
-      get_computer_move # FIXME add human
+      # board.to_play == :white ? get_player_move : get_computer_move # FIXME add human
+      get_computer_move
     end
 
     def play single_step = true
@@ -33,12 +39,10 @@ module Chess
         puts "#{board.to_play} playing#{" - move #{board.halfmove_number}" unless 1 == board.halfmove_number}#{' - check' if board.check?}"
         @winner, @loser = board.next_to_play, board.to_play if board.checkmate?
         mv = get_move
-        # mv = mvs.sample
-        puts "- #{mv.description}"
+        puts "#{mv} - #{mv.description}"
         move mv
-        puts "\n#{board.to_play} to play#{' - check' if board.check?}"
+        puts "\n#{board.to_play} to play#{' - in check' if board.check?}"
         board.display
-        # puts board.distinct_state
         gets if single_step
       end
     end

@@ -1,9 +1,8 @@
 module Chess
   class Piece
 
-    # FIXME rename to vector - ray is the locations
-    def self.diagonal_rays ; [[-1,-1], [1,-1], [-1,1], [1,1]] end
-    def self.cardinal_rays ; [[1,0], [-1,0], [0,1], [0,-1]] end
+    def self.diagonal_vectors ; [[-1,-1], [1,-1], [-1,1], [1,1]] end
+    def self.cardinal_vectors ; [[1,0], [-1,0], [0,1], [0,-1]] end
 
     def self.piece_name ; name.split('::').last.downcase.to_sym end
 
@@ -110,18 +109,20 @@ module Chess
 
     def inspect ; "<#{self.class.name}:#{'0x%014x' % (object_id << 1)} #{color}#{' - unmoved' unless last_move}>" end
 
-    def diagonal_rays ; self.class.diagonal_rays end
-    def cardinal_rays ; self.class.cardinal_rays end
+    def diagonal_vectors ; self.class.diagonal_vectors end
+    def cardinal_vectors ; self.class.cardinal_vectors end
     def move_pattern ; self.class.move_pattern end
 
     # The pseudo-legal moves - including into our own pieces. Used for calculating check, etc.
-    def threatened_squares tx = x, ty = y ; board.available_moves_along_rays tx, ty, move_pattern end
+    def threatened_squares tx = x, ty = y ; board.available_moves_along_vectors tx, ty, move_pattern end
 
     # The actual legal moves, with the exception of revealed-check
     def moves tx = x, ty = y ; threatened_squares(tx, ty).map {|dx,dy| move dest: [dx, dy] unless board.at(dx,dy)&.color == color }.compact end
 
     # This piece, royal or not - don't consider enpassant unless told to, because it probably doesn't apply to us
-    def check? tx = x, ty = y, consider_enpassant: false ; board.threatened_squares(color, consider_enpassant: consider_enpassant).map {|a,b,c| [a,b] }.include? [tx, ty] end
+    def check? tx = x, ty = y, consider_enpassant: false
+      board.threatened_squares(enemy_color, consider_enpassant: consider_enpassant).map {|a,b,c| [a, b] }.include? [tx, ty]
+    end
 
     def x ; location[0] end
     def y ; location[1] end
@@ -142,15 +143,15 @@ module Chess
     end
 
     class Queen < Piece
-      def self.move_pattern ; diagonal_rays + cardinal_rays end
+      def self.move_pattern ; diagonal_vectors + cardinal_vectors end
     end
 
     class Bishop < Piece
-      def self.move_pattern ; diagonal_rays end
+      def self.move_pattern ; diagonal_vectors end
     end
 
     class Rook < Piece
-      def self.move_pattern ; cardinal_rays end
+      def self.move_pattern ; cardinal_vectors end
       def starting_rank ; :white == color ? 1 : 8 end # TODO - 8x8 centric
       def in_starting_position? ; starting_rank == y && [1,8].include?(x) end # We don't try to figure out where we actually started
       def can_castle? ; in_starting_position? && !moved? end
@@ -163,7 +164,7 @@ module Chess
     end
 
     class King < Piece
-      def self.move_pattern ; Queen.move_pattern.map {|ray| ray << 1 } end # Same directions, limit one square
+      def self.move_pattern ; Queen.move_pattern.map {|vector| vector << 1 } end # Same directions, limit one square
       def starting_rank ; :white == color ? 1 : 8 end # TODO Assumes 8x8 - can't castle otherwise
       def starting_location ; [5, starting_rank] end
       def disable_castle_left  ; @can_castle_left  = false end # Castleability needs to be revocable for loading a game from FEN
@@ -187,7 +188,7 @@ module Chess
         can_castle_left, can_castle_right = castleability
         [[left_rook, 4, 3, can_castle_left], [right_rook, 6, 7, can_castle_right]].select {|rook, rook_dest, king_dest, can_castle|
           next unless can_castle
-          threats = board.threatened_squares(color) # FIXME Speedtest using .uniq here
+          threats = board.threatened_squares(enemy_color) # FIXME Speedtest using .uniq here
           next unless catch(:stop) do
             squares_between(king_dest) {|*loc| next if location == loc ; throw :stop if board.at(loc) || threats.include?(loc) }
           end
@@ -205,7 +206,7 @@ module Chess
       end
 
       def moves tx = x, ty = y
-        locations_in_check = board.threatened_squares(color) # .uniq # FIXME slow
+        locations_in_check = board.threatened_squares(enemy_color) # .uniq # FIXME slow
         super.reject {|mv| locations_in_check.include? mv.dest } + castling_moves
       end
 
@@ -223,13 +224,13 @@ module Chess
 
     class Pawn < Piece
       def start_rank ; :white == color ? 2 : 7 end
-      def enpassant_rank ; :white == color ? 5 : 4 end
+      def enpassant_rank ; :white == color ? 5 : 4 end # TODO Support non 8x8 board
       def offset ; board.pawn_offset color end # Which direction do we go? [1,-1]
       def can_move_double ; start_rank == y && number_of_moves.zero? end
-      def can_capture_enpassant ; enpassant_rank == y end # FIXME What is a proper test on a non-standard board?
+      def can_capture_enpassant ; enpassant_rank == y end
       def can_be_captured_enpassant ; start_rank + offset * 2 == y && 1 == number_of_moves end
 
-      def move_pattern ; [[0,offset,(can_move_double ? 2 : 1)]] end # a ray of length 1 or 2
+      def move_pattern ; [[0,offset,(can_move_double ? 2 : 1)]] end # a vector of length 1 or 2
       def direct_capture_pattern ; [[-1, offset], [1, offset]] end
       def direct_enpassant_pattern ; direct_capture_pattern.map {|ox,oy| [ox,oy,ox,0] } end # Adds a capture location - to either side, on the same rank
       def enpassant_pattern ; can_capture_enpassant ? direct_enpassant_pattern : [] end
@@ -238,7 +239,7 @@ module Chess
       # In this case, we are vulnerable to enpassant, so enquire about threat via it
       def check? tx = x, ty = y ; super tx, ty, consider_enpassant: true end
 
-      def move_squares tx = x, ty = y ; board.available_moves_along_rays(tx, ty, move_pattern).map {|dx, dy| [dx, dy] } end
+      def move_squares tx = x, ty = y ; board.available_moves_along_vectors(tx, ty, move_pattern).map {|dx, dy| [dx, dy] } end
 
       def threatened_squares tx = x, ty = y ; capture_pattern.map {|ox,oy,enpassant| dx, dy = tx + ox, ty + oy ; [dx, dy, enpassant] if valid_xy dx, dy }.compact end
 
