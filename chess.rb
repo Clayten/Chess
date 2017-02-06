@@ -12,6 +12,7 @@ require 'ai'
 
 # For now, also just reload them each time
 load 'board.rb'
+load 'pgn.rb'
 load 'piece.rb'
 load 'action.rb'
 load 'game.rb'
