@@ -40,7 +40,7 @@ module Chess
       pgn = pgn.gsub(/{[^}]*}/,'').strip # remove comments
       pgn = pgn.gsub(/\d+\. \.{3}/,'') # 1. e4 {foo} 1. ... e5
       pgn = pgn.gsub(/\s{2,}/,' ')
-      score = pgn[/\S+$/]
+      score = pgn[/(?<=\s)[-01*]+$/] || headers['Result']
       moves = parse_transcript pgn
       layout, to_play, castling_rights, enpassant, halfmove_clock, move_number = parse_fen headers['FEN'] if '1' == headers['SetUp']
 
@@ -124,6 +124,15 @@ module Chess
       move_pairs.map {|(m1, m2),i| "#{i + 1}. #{m1}#{" #{m2}" if m2}" }.join(' ') + " #{status_text}"
     end
 
+    def to_fen_layout
+      ysize.downto(1).map {|y|
+        1.upto(xsize).map {|x|
+          pc = at(x,y)
+          pc ? pc.to_fen : '.'
+        }.join
+      }.join('/').gsub(/\.+/) {|s| s.length.to_s }
+    end
+
     def to_fen
       "#{to_fen_layout} " +
       "#{:white == to_play ? 'w' : 'b'} " +
@@ -157,12 +166,54 @@ module Chess
     def self.load_pgn str, interactive = false
       headers, layout, moves, to_play, castling_rights, enpassant, halfmove_clock, move_number, score = parse_pgn str
       board = new layout
-      moves.each {|mv| board.do_pgn_move mv ; next unless interactive ; puts "\n\nMoved #{mv}" ; board.display ; gets }
+      moves.each {|mv| board.do_pgn_move mv ; next unless interactive ; puts "\n#{board.next_to_play} moved #{mv} - #{board.history.last.description}" ; board.display ; gets }
       board
     end
 
     # Takes a move string eg: 'Qxb6', decodes it, finds the piece, and performs the move if legal
     def do_pgn_move pgn ; move create_pgn_move pgn end
+
+
+    # Note: Because castling rights default to true, this returns the INVERSE of the specified rights - to be disabled
+    def self.parse_castling_rights str
+      raise "Improper castling rights '#{str}'" unless str =~ /^([kq]{1,4}|-)$/i
+      syms = {'Q' => [:white, :left],
+              'K' => [:white, :right],
+              'q' => [:black, :left],
+              'k' => [:black, :right]}
+      all = syms.values
+      return all if '-' == str
+      indicated_rights = str.scan(/./).map {|c| syms[c] }
+      all - indicated_rights
+    end
+    def parse_castling_rights str ; self.class.parse_castling_rights str end
+
+    def castling_text
+      t = "#{(king(:white)&.to_pgn || '') + (king(:black)&.to_pgn || '')}"
+      t.empty? ? '-' : t
+    end
+
+    def enpassant_availability
+      enemy_pawn = enemy_pieces.select {|pc| :pawn == pc.type }.find {|pc| pc.can_be_captured_enpassant }
+      return '-' unless enemy_pawn && own_pieces.select {|pc| :pawn == pc.type }.find {|pc| pc.moves.any? {|mv| mv.capture? && mv.capture_location == enemy_pawn.location } }
+      Chess.locstr(enemy_pawn.location)[0]
+    end
+
+    def parse_fen_layout fen ; fen.split('/').map {|line| line.gsub(/\d+/) {|n| '.' * n.to_i }.split(//) } end
+
+    def self.status_text status, winner
+      case status
+      when :in_progress ; '*'
+      when :stalemate   ; '1/2-1/2'
+      when :draw        ; '1/2-1/2'
+      when :checkmate   ; (:white == winner ? '1-0' : '0-1')
+      else ; raise "Unknown status #{status.inspect}"
+      end
+    end
+    def status_text ; self.class.status_text status, winner end
+
+
+
 
   end
 end
