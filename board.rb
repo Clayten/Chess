@@ -30,10 +30,10 @@ module Chess
       (((x % 2) + (y % 2)) % 2).zero? ? :black : :white
     end
 
-    def render overlays = {}
+    def render overlay = {}, underlay = {}
       ysize.downto(1).map {|y|
         1.upto(xsize).map {|x|
-          overlays[[x,y]] || pieces[[x,y]] || square(color_at(x,y))
+          overlay[[x,y]] || pieces[[x,y]] || underlay[[x,y]] || square(color_at(x,y))
         }.join + " #{y}"
       }.join("\n") +
       "\n" + xsize.times.map {|i| (i + 10).to_s(36) }.join + "\n"
@@ -48,21 +48,49 @@ module Chess
       end
     end
 
-    def arrowdir mv
-      arrows = {[-1,0] => '←', [0,1] => '↑', [1,0] => '→', [0,-1] => '↓', [1,1] => '↗', [1,-1] => '↘', [-1,-1] => '↙', [-1,1] => '↖'}
-      dx = mv.dest.first - mv.src.first
-      dy = mv.dest.last  - mv.src.last
-      dx = dx < 0 ? -1 : 1 unless dx.zero?
-      dy = dy < 0 ? -1 : 1 unless dy.zero?
-      arrows[[dx,dy]]
+    def arrowdir vec
+      {[-1,0] => '←', [0,1] => '↑', [1,0] => '→', [0,-1] => '↓', [1,1] => '↗', [1,-1] => '↘', [-1,-1] => '↙', [-1,1] => '↖'}[vec]
     end
 
     public
 
-    def display overlays = {}
+    def color char, color = :red
+      (@highline ||= HighLine.new).color char, color
+    end
+
+    def show_threatened_squares clr = to_play
+      overlay = {}
+      dot = "\u{2022}"
+      threatened_squares(clr).uniq.each {|x,y|
+        pc = at x, y
+        next if pc && pc.color == clr # Don't show own pieces as threatened
+        c = pc ? color(pc.to_s, :on_red) : color(dot)
+        overlay[[x,y]] = c
+      }
+      display overlay
+    end
+
+    def display overlay = {}, underlay = {}
       last = history.last
-      overlays = {last.src => HighLine.new.color(arrowdir(last), :red)} if overlays.empty? && last
-      puts render(overlays)
+      if underlay.empty? && last
+        underlay = {}
+        src, dest = last.src, last.dest
+        dx, dy = dest.zip(src).map {|a,b| a - b }
+        if !dx.zero? && !dy.zero? && dx.abs != dy.abs # Handle one leg of a knight move specially
+          vec = dx.abs < dy.abs ? [dx, 0] : [0, dy] # Choose the short one
+          underlay[src] = color arrowdir(vec), :red
+          src = [src.first + vec.first, src.last + vec.last]
+          dx, dy = dest.zip(src).map {|a,b| a - b }
+        end
+        stepx = dx.zero? ? 0 : dx / dx.abs
+        stepy = dy.zero? ? 0 : dy / dy.abs
+        ([dx.abs, dy.abs].max).times {
+          underlay[src] = color arrowdir([stepx, stepy]), :red
+          src = [src.first + stepx, src.last + stepy]
+        }
+        # underlay = {last.src => HighLine.new.color(arrowdir(last), :red)} # Does just the src square
+      end
+      puts render(overlay, underlay)
     end
 
     def available_moves_along_vectors x, y, vectors, maxlen: nil

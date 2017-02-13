@@ -40,7 +40,7 @@ module Chess
       pgn = pgn.gsub(/{[^}]*}/,'').strip # remove comments
       pgn = pgn.gsub(/\d+\. \.{3}/,'') # 1. e4 {foo} 1. ... e5
       pgn = pgn.gsub(/\s{2,}/,' ')
-      score = pgn[/(?<=\s)[-01*]+$/] || headers['Result']
+      score = pgn[/(?<=\s)[-012*\/]+$/] || headers['Result']
       moves = parse_transcript pgn
       layout, to_play, castling_rights, enpassant, halfmove_clock, move_number = parse_fen headers['FEN'] if '1' == headers['SetUp']
 
@@ -165,7 +165,7 @@ module Chess
     # TODO Load the player names and other headers
     def self.load_pgn str, interactive = false
       headers, layout, moves, to_play, castling_rights, enpassant, halfmove_clock, move_number, score = parse_pgn str
-      board = new layout
+      $b = board = new layout
       moves.each {|mv| board.do_pgn_move mv ; next unless interactive ; puts "\n#{board.next_to_play} moved #{mv} - #{board.history.last.description}" ; board.display ; gets }
       board
     end
