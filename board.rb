@@ -1,3 +1,5 @@
+require 'highline'
+
 module Chess
   class Board
 
