@@ -74,7 +74,6 @@ module Chess
     end
 
     # Must be done on the instance, as it relies on context
-    # returns the src_loc and dest_loc
     def parse_pgn_move pgn
       color = to_play
       last_rank = :white == color ? 1 : ysize
@@ -103,6 +102,8 @@ module Chess
       [type, disambiguator, capture, file, rank, new_type, check, checkmate, castling]
     end
 
+    public
+
     # Create move from pgn notation
     def create_pgn_move pgn
       types = {'K' => :king, 'Q' => :queen, 'R' => :rook, 'B' => :bishop, 'N' => :knight, '' => :pawn}
@@ -115,8 +116,6 @@ module Chess
       pc = find_piece types[type], dest, disambiguator
       mv = pc.moves.find {|m| next unless m.castling? if castling ; m.dest == dest }
     end
-
-    public
 
     def transcript
       move_pairs = history.each_slice(2).each_with_index.to_a

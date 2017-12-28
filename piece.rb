@@ -90,10 +90,13 @@ module Chess
       board.move move dest: [x, y]
     end
 
+    # Returns disambiguation text for this piece if simply writing its type/destination is not enough
+    # to differentiate it from other similar pieces capable of the same move
+    # Prefer to reference a piece by it's file (side to side) before rank (back to front) before using both.
     def disambiguate tx, ty
-      pcs = board.pieces.values.select {|pc| pc.color == color && pc.type == type && pc != self }
-      pcs.select! {|pc| pc.can_move_to tx, ty }
-      return '' if pcs.empty? # no disambiguator needed
+      pcs = board.pieces.values.select {|pc| pc.color == color && pc.type == type && pc != self } # Find all similar pieces to this one
+      pcs.select! {|pc| pc.can_move_to tx, ty } # take just those that are capable of making the same move
+      return '' if pcs.empty? # If there aren't any, no disambiguator is needed
       return Chess.file_to_letter x unless pcs.any? {|pc| pc.x == x } # If we're the only on this file, use the file
       return y.to_s unless pcs.any? {|pc| pc.y == y } # If we're the only on this rank, use the rank
       Chess.locstr location # Else, use the entire location
