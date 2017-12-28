@@ -94,6 +94,7 @@ module Chess
     # to differentiate it from other similar pieces capable of the same move
     # Prefer to reference a piece by it's file (side to side) before rank (back to front) before using both.
     def disambiguate tx, ty
+      # could check and raise an error or return '' if the piece can't actually make the move itself.
       pcs = board.pieces.values.select {|pc| pc.color == color && pc.type == type && pc != self } # Find all similar pieces to this one
       pcs.select! {|pc| pc.can_move_to tx, ty } # take just those that are capable of making the same move
       return '' if pcs.empty? # If there aren't any, no disambiguator is needed
