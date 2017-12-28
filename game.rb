@@ -20,13 +20,12 @@ module Chess
       txt = gets.strip
       board.create_pgn_move txt
     rescue StandardError => e
-      p [:rescued, e]
+      p [:rescued, e, e.backtrace]
       retry
     end
 
     def get_move
-      # board.to_play == :white ? get_player_move : get_computer_move # FIXME add human
-      get_computer_move
+      :computer == players[board.to_play] ? get_computer_move : get_player_move
     end
 
     def play single_step = true
@@ -72,10 +71,11 @@ module Chess
       # create move
     end
 
-    attr_reader :board
+    attr_reader :board, :players
     def initialize board = nil
       board = Board.new(layout: :default_8x8) unless board
       board = Board.new(layout: board) unless board.respond_to? :pieces
+      @players = {white: :computer, black: :computer}
       @board = board
     end
   end
